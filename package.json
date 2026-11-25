@@ -1,0 +1,28 @@
+{
+  "name": "pico-sim",
+  "version": "1.0.0",
+  "description": "Raspberry Pi Pico + MicroPython simulator in the browser (rp2040js), served from GitHub Pages",
+  "scripts": {
+    "fetch-firmware": "node scripts/fetch-firmware.mjs",
+    "build": "node scripts/fetch-firmware.mjs && node scripts/build.mjs",
+    "dev": "node scripts/fetch-firmware.mjs && node scripts/build.mjs --serve",
+    "test": "tsx test/headless.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "littlefs": "^0.1.0",
+    "rp2040js": "^1.4.2"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.10",
+    "esbuild": "^0.28.2",
+    "puppeteer-core": "^25.19.0",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  },
+  "private": true
+}

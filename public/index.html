@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>pico-sim</title>
+    <link rel="stylesheet" href="style.css" />
+    <script type="module" src="app.js"></script>
+  </head>
+  <body>
+    <header>
+      <h1>pico-sim</h1>
+      <select id="firmware" aria-label="Firmware">
+        <option value="RPI_PICO_W-20231227-v1.22.0.uf2">Pico W · MicroPython 1.22.0</option>
+        <option value="RPI_PICO-20231227-v1.22.0.uf2">Pico · MicroPython 1.22.0</option>
+      </select>
+      <button id="run" class="primary" title="Ctrl+Enter">▶ Run</button>
+      <button id="stop" disabled>■ Stop</button>
+      <span id="status" class="status">Ready</span>
+    </header>
+
+    <main>
+      <section class="code">
+        <nav id="tabs"></nav>
+        <textarea id="editor" spellcheck="false" aria-label="Code editor"></textarea>
+        <p class="hint">Edits here are local to this tab. Commit to the repo to change what everyone sees.</p>
+      </section>
+
+      <section class="board">
+        <h2>Circuit</h2>
+        <div class="parts">
+          <div class="part">
+            <div id="led" class="led" aria-label="LED"></div>
+            <span>LED · GP16</span>
+          </div>
+          <div class="part">
+            <button id="button" class="pushbutton" aria-label="Push button"></button>
+            <span>Button · GP14 → GND</span>
+          </div>
+        </div>
+        <h2>Serial monitor</h2>
+        <pre id="serial" class="serial"></pre>
+        <input id="serial-input" class="serial-input" placeholder="Type and press Enter · Ctrl+C interrupts" disabled />
+      </section>
+    </main>
+  </body>
+</html>
