@@ -96,6 +96,27 @@ try {
     await page.keyboard.press('Escape');
   });
 
+  await step('Ctrl+Enter twice at once -> one program running, and Stop silences it', async () => {
+    // Both run() calls overlap (the second lands while the first awaits Board.create).
+    // A leftover first board would print a second banner, find no parts ("nije dostupna")
+    // and keep printing after Stop.
+    await page.evaluate(() => {
+      const editor = document.querySelector('#editor');
+      for (let i = 0; i < 2; i++) editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }));
+    });
+    await waitSerial('[MJERENJE]', 30000);
+    await new Promise((r) => setTimeout(r, 1500));
+    const text = await serial();
+    const banners = text.split('[START] Nadzor hladnog lanca').length - 1;
+    if (banners !== 1) throw new Error(`${banners} start banners`);
+    if (/nije dostupna|nije pronaden/.test(text)) throw new Error('a second board without parts is running');
+    await page.click('#stop');
+    const stopped = (await serial()).length;
+    await new Promise((r) => setTimeout(r, 11000)); // longer than one 10 s measurement interval
+    const later = (await serial()).length;
+    if (later !== stopped) throw new Error(`serial output grew after Stop (${stopped} -> ${later} chars)`);
+  });
+
   ok = errors.length === 0;
 } catch {
   ok = false;

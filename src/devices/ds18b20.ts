@@ -148,7 +148,11 @@ export class DS18B20 {
     this.temp = clampTemp(value);
   }
 
-  /** false: behaves like an absent sensor (no presence pulse, never pulls the line). */
+  /**
+   * false: behaves like an absent sensor (no presence pulse, never pulls the line).
+   * Unplugging cuts the sensor's power, so plugging it back in is a power-on: the
+   * scratchpad returns to 85.0 C and TH/TL/config are reloaded from EEPROM, like the real chip.
+   */
   get connected() {
     return this.present;
   }
@@ -156,10 +160,21 @@ export class DS18B20 {
     if (value === this.present || this.detached) return;
     this.present = value;
     this.lineAlarm.cancel();
+    this.convAlarm.cancel();
+    this.converting = false;
     this.lineStep = 'none';
     this.phase = { kind: 'idle' };
     this.pulling = false;
+    if (value) this.powerOn();
     this.bus.update();
+  }
+
+  private powerOn() {
+    this.tempRaw = 0x0550; // 85.0 C
+    this.th = this.eeprom.th;
+    this.tl = this.eeprom.tl;
+    this.config = this.eeprom.config;
+    this.alarmFlag = false;
   }
 
   /** Remove the sensor from the pin. If it was the last one, the line is left idle (high). */

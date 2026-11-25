@@ -34,6 +34,11 @@
 //   generic input logic never writes them (the DS18B20 and I2C models drive those inputs).
 //   One SD card per SPI controller and one DS1307 per I2C controller (the models own the
 //   peripheral's callbacks); a second one gets a warning.
+//   A GPIO belongs to one part pin only: a part whose pin lands on a GPIO another part
+//   (or another of its own pins) already uses is not attached ("sd1: CS (GP15) is already
+//   used by temp1 DQ"). A pushbutton or LED on a part's GPIO does nothing; one wired
+//   straight to it (no resistor in between) gets a warning.
+//   Wire ends that name an unknown part or Pico pin are reported too (typos).
 //
 // Public API
 //   new CircuitSystem(diagram, board | null, options?)  board: attach right away
@@ -162,6 +167,8 @@ export class CircuitSystem {
   // Devices: resolved pins of every valid part, and the GPIOs they own.
   private readonly pins = new Map<string, Record<string, number>>();
   private readonly owned = new Set<number>();
+  /** Owned GPIO -> "part pin" that owns it, for the shared-pin warnings. */
+  private readonly owners = new Map<number, string>();
   /** GPIOs the generic logic watches and drives (wired to something, not owned). */
   private generic: number[] = [];
 
@@ -182,8 +189,10 @@ export class CircuitSystem {
       if (part.type === 'wokwi-led') this.leds.set(part.id, false);
     }
     if (!this.boardId) this.warnings.push('diagram.json has no Pico (board-pi-pico-w or board-pi-pico)');
+    this.checkConnections();
     this.rebuildNets();
     this.resolveDevices();
+    this.checkOwnedNets();
     const used = new Set<number>();
     for (const [, info] of this.netInfo) for (const gp of info.gpios) used.add(gp);
     this.generic = [...used].filter((gp) => !this.owned.has(gp)).sort((a, b) => a - b);
@@ -576,8 +585,10 @@ export class CircuitSystem {
           role('DI', di, 3, 'TX');
           role('DO', dout, 0, 'RX');
           if (spiTaken.has(spi)) throw new WiringError(`${id}: SPI${spi} already has an SD card (${spiTaken.get(spi)})`);
+          const pins = { SCK: sck, DI: di, DO: dout, CS: cs, spi };
+          this.checkFree(id, pins);
           spiTaken.set(spi, id);
-          return { SCK: sck, DI: di, DO: dout, CS: cs, spi };
+          return pins;
         });
       } else if (type === 'wokwi-ds1307') {
         this.rtcIds.push(id);
@@ -605,8 +616,10 @@ export class CircuitSystem {
             throw new WiringError(`${id}: SCL must connect to an I2C SCL pin (GP${pinsFor(1, i2c)} for I2C${i2c}, like SDA)`);
           }
           if (i2cTaken.has(i2c)) throw new WiringError(`${id}: I2C${i2c} already has a DS1307 (${i2cTaken.get(i2c)})`);
+          const pins = { SDA: sda, SCL: scl, i2c };
+          this.checkFree(id, pins);
           i2cTaken.set(i2c, id);
-          return { SDA: sda, SCL: scl, i2c };
+          return pins;
         });
       }
     }
@@ -616,11 +629,61 @@ export class CircuitSystem {
     if (!this.boardId) return;
     try {
       const pins = check();
+      this.checkFree(id, pins);
       this.pins.set(id, pins);
-      for (const [name, gp] of Object.entries(pins)) if (name !== 'spi' && name !== 'i2c') this.owned.add(gp);
+      for (const [name, gp] of gpioPins(pins)) {
+        this.owned.add(gp);
+        this.owners.set(gp, `${id} ${name}`);
+      }
     } catch (e) {
       if (!(e instanceof WiringError)) throw e;
       this.warnings.push(e.message);
+    }
+  }
+
+  /** Throws if one of the part's GPIOs is used twice by it, or already owned by another part. */
+  private checkFree(id: string, pins: Record<string, number>) {
+    const mine = new Map<number, string>();
+    for (const [name, gp] of gpioPins(pins)) {
+      const other = this.owners.get(gp) ?? (mine.has(gp) ? `${id} ${mine.get(gp)}` : undefined);
+      if (other) throw new WiringError(`${id}: ${name} (GP${gp}) is already used by ${other}`);
+      mine.set(gp, name);
+    }
+  }
+
+  /** Wire ends must name a part in the diagram, and a real pin for the Pico and known parts. */
+  private checkConnections() {
+    const types = this.partTypes;
+    this.diagram.connections.forEach(([a, b], index) => {
+      for (const ref of [a, b]) {
+        const colon = ref.indexOf(':');
+        const id = colon < 0 ? ref : ref.slice(0, colon);
+        const pin = colon < 0 ? '' : ref.slice(colon + 1);
+        if (id.startsWith('$')) continue; // Wokwi's virtual parts, e.g. $serialMonitor:RX
+        const type = types.get(id);
+        const known = type && BOARD_TYPES.has(type) ? BOARD_PIN_NAMES : type ? PART_PINS[type] : undefined;
+        if (!type) this.warnings.push(`connection ${index + 1} (${a} - ${b}): there is no part "${id}"`);
+        else if (known && !known.has(pin)) this.warnings.push(`connection ${index + 1} (${a} - ${b}): ${id} has no pin "${pin}"`);
+      }
+    });
+  }
+
+  /** Buttons and LEDs on a GPIO that a part model owns do nothing in the simulator: say so. */
+  private checkOwnedNets() {
+    if (!this.boardId) return;
+    const seen = new Set<string>();
+    for (const [gp, owner] of this.owners) {
+      const net = this.find(`${this.boardId}:GP${gp}`);
+      for (const [a, b] of this.diagram.connections) {
+        for (const ref of [a, b]) {
+          const id = ref.split(':')[0];
+          const type = this.partTypes.get(id);
+          if (type !== 'wokwi-pushbutton' && type !== 'wokwi-led') continue;
+          if (this.find(ref) !== net || seen.has(id)) continue;
+          seen.add(id);
+          this.warnings.push(`${id}: GP${gp} belongs to ${owner}, so ${id} on it is ignored`);
+        }
+      }
     }
   }
 
@@ -648,6 +711,20 @@ export class CircuitSystem {
 }
 
 class WiringError extends Error {}
+
+/** The GPIO entries of a resolved pin record (without the spi / i2c controller number). */
+const gpioPins = (pins: Record<string, number>) => Object.entries(pins).filter(([name]) => name !== 'spi' && name !== 'i2c');
+
+/** Pin names of the Pico (plus the "GND" alias) and of the parts with a model, for the typo check. */
+const BOARD_PIN_NAMES = new Set([...PICO_PINS.map((p) => p.name), 'GND']);
+const PART_PINS: Record<string, Set<string>> = {
+  'wokwi-led': new Set(['A', 'C']),
+  'wokwi-resistor': new Set(['1', '2']),
+  'wokwi-pushbutton': new Set(['1.l', '1.r', '2.l', '2.r']),
+  'wokwi-ds18b20': new Set(['GND', 'DQ', 'VCC']),
+  'wokwi-microsd-card': new Set(['CD', 'DO', 'GND', 'SCK', 'VCC', 'DI', 'CS']),
+  'wokwi-ds1307': new Set(['GND', '5V', 'SDA', 'SCL', 'SQW']),
+};
 
 export function gpioIndex(name: string): number | null {
   const m = /^GP(\d+)$/.exec(name);

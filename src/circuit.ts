@@ -41,6 +41,8 @@ const WOKWI_TAGS: Record<string, string> = {
   'wokwi-ds1307': 'wokwi-ds1307',
 };
 const MARGIN = 28;
+/** Parts with settings in the Parts panel (clicking them in the circuit selects their card). */
+const SETTABLE = new Set(['wokwi-ds18b20', 'wokwi-microsd-card', 'wokwi-ds1307']);
 
 // DS18B20 in a TO-92 package, seen from the flat (printed) side; legs GND, DQ, VCC
 // 2.54 mm (9.6 px) apart, like Wokwi's part. Pins are at the leg ends.
@@ -54,7 +56,7 @@ const DS18B20_PINS: Pin[] = [
 const DS18B20_SVG = `
   <svg xmlns="http://www.w3.org/2000/svg" width="${DS18B20_WIDTH}" height="${DS18B20_HEIGHT}" viewBox="0 0 ${DS18B20_WIDTH} ${DS18B20_HEIGHT}">
     ${DS18B20_PINS.map((p) => `<path d="M${14 + (p.x - 14) * 0.45} 24 L${p.x} 31 V${p.y}" fill="none" stroke="#b9bec5" stroke-width="1.6" stroke-linecap="round"/>`).join('')}
-    <path d="M2 26 V10 A12 10 0 0 1 26 10 V26 Z" fill="#232323" stroke="#0e0e0e" stroke-width="0.6"/>
+    <path class="ds18b20-body" d="M2 26 V10 A12 10 0 0 1 26 10 V26 Z" fill="#232323" stroke="#0e0e0e" stroke-width="0.6"/>
     <text x="14" y="15" text-anchor="middle" class="ds18b20-name">DS18B20</text>
     ${DS18B20_PINS.map((p) => `<text x="${p.x + (14 - p.x) * 0.25}" y="23" text-anchor="middle" class="ds18b20-pin">${p.name}</text>`).join('')}
   </svg>`;
@@ -74,6 +76,7 @@ export class Circuit {
     this.render();
     this.unsubscribe = this.system.onChange((c) => {
       if (c.kind === 'leds' || c.kind === 'devices') this.showLeds();
+      if (c.kind === 'settings' || c.kind === 'devices') this.showTemperatures();
     });
     this.resize = new ResizeObserver(() => this.fit());
     this.resize.observe(stage);
@@ -116,6 +119,7 @@ export class Circuit {
       const problems = this.system.warnings.filter((w) => w.startsWith(`${part.id}:`));
       el.title = [`${part.id} (${part.type})`, ...problems].join('\n');
       if (problems.length) el.classList.add('part-warn');
+      this.addAffordance(part, el, problems.length > 0);
       world.append(el);
       this.parts.set(part.id, placed);
     }
@@ -128,6 +132,41 @@ export class Circuit {
       this.fit();
     });
     this.showLeds();
+    this.showTemperatures();
+  }
+
+  /**
+   * Make it visible what can be clicked: the pushbutton is pressed with the mouse; a sensor,
+   * card or clock opens its settings in the Parts panel (the page listens for 'part-select').
+   */
+  private addAffordance(part: DiagramPart, el: PartElement, miswired: boolean) {
+    if (part.type === 'wokwi-pushbutton') {
+      el.classList.add('pressable');
+      if (!miswired) el.title = `${part.id}: click and hold to press`;
+      return;
+    }
+    if (!SETTABLE.has(part.type)) return;
+    el.classList.add('selectable');
+    if (!miswired) el.title = `${part.id}: click to change it in the Parts panel`;
+    el.addEventListener('click', () =>
+      this.stage.dispatchEvent(new CustomEvent('part-select', { detail: part.id, bubbles: true })),
+    );
+    if (part.type === 'wokwi-ds18b20') {
+      // The temperature the sensor sees, shown above it and kept in sync with the Parts panel.
+      const tag = document.createElement('span');
+      tag.className = 'temp-tag';
+      el.append(tag);
+    }
+  }
+
+  private showTemperatures() {
+    for (const id of this.system.sensorIds) {
+      const tag = this.parts.get(id)?.el.querySelector('.temp-tag');
+      if (!tag) continue;
+      const on = this.system.sensorConnected(id);
+      tag.textContent = on ? `${this.system.temperature(id).toFixed(1)} °C` : 'unplugged';
+      tag.classList.toggle('off', !on);
+    }
   }
 
   private createPart(part: DiagramPart): PlacedPart | null {
@@ -222,6 +261,9 @@ export class Circuit {
     }
     const w = maxX - minX + 2 * MARGIN;
     const h = maxY - minY + 2 * MARGIN;
+    // Narrow screens size the stage from the diagram's shape (style.css), so it isn't a
+    // tall box with a small drawing in the middle.
+    this.stage.style.setProperty('--diagram-aspect', (w / h).toFixed(3));
     const scale = Math.min(this.stage.clientWidth / w, this.stage.clientHeight / h, 3);
     const offX = (this.stage.clientWidth - (maxX - minX) * scale) / 2 - minX * scale;
     const offY = (this.stage.clientHeight - (maxY - minY) * scale) / 2 - minY * scale;

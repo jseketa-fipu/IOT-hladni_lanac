@@ -20,6 +20,7 @@ const tabs = $('tabs');
 const editor = $<HTMLTextAreaElement>('editor');
 const serialOut = $('serial');
 const serialIn = $<HTMLInputElement>('serial-input');
+const serialFollow = $<HTMLInputElement>('serial-follow');
 const stage = $('circuit');
 const controlsPanel = $('controls');
 const viewer = new FileViewer(
@@ -71,7 +72,7 @@ function drawCircuit(): boolean {
   try {
     diagram = JSON.parse(source);
   } catch (e) {
-    statusText.textContent = `${DIAGRAM}: ${(e as Error).message}`;
+    setStatus(`${DIAGRAM}: ${(e as Error).message}`, 'error');
     return false;
   }
   circuit?.dispose();
@@ -82,7 +83,7 @@ function drawCircuit(): boolean {
     circuit = new Circuit(stage, diagram);
     controls = new Controls(controlsPanel, circuit.system, viewer);
   } catch (e) {
-    statusText.textContent = `${DIAGRAM}: ${(e as Error).message}`;
+    setStatus(`${DIAGRAM}: ${(e as Error).message}`, 'error');
     return false;
   }
   circuitSource = source;
@@ -109,13 +110,61 @@ function renderTabs() {
 }
 
 function appendSerial(text: string) {
-  const atBottom = serialOut.scrollTop + serialOut.clientHeight >= serialOut.scrollHeight - 4;
   serialOut.textContent += text.replace(/\r\n/g, '\n');
   if (serialOut.textContent!.length > 200_000) serialOut.textContent = serialOut.textContent!.slice(-100_000);
-  if (atBottom) serialOut.scrollTop = serialOut.scrollHeight;
+  if (serialFollow.checked) serialOut.scrollTop = serialOut.scrollHeight;
 }
 
+/** Header status text; `state` colours the dot in front of it (see .status in style.css). */
+function setStatus(text: string, state: 'idle' | 'busy' | 'running' | 'error' = 'idle') {
+  statusText.textContent = text;
+  statusText.dataset.state = state;
+}
+
+// Scrolling up to read turns auto-scroll off; scrolling back to the end turns it on again.
+serialOut.addEventListener('scroll', () => {
+  serialFollow.checked = serialOut.scrollTop + serialOut.clientHeight >= serialOut.scrollHeight - 4;
+});
+serialFollow.onchange = () => {
+  if (serialFollow.checked) serialOut.scrollTop = serialOut.scrollHeight;
+};
+$('serial-clear').onclick = () => {
+  if (!serialOut.classList.contains('empty')) serialOut.textContent = '';
+};
+$('serial-copy').onclick = async (e) => {
+  const button = e.currentTarget as HTMLButtonElement;
+  const text = serialOut.classList.contains('empty') ? '' : (serialOut.textContent ?? '');
+  try {
+    await navigator.clipboard.writeText(text);
+    button.textContent = 'Copied';
+  } catch {
+    button.textContent = 'Copy failed';
+  }
+  setTimeout(() => (button.textContent = 'Copy'), 1200);
+};
+
+// Clicking a sensor, card or clock in the circuit brings up its card in the Parts panel.
+stage.addEventListener('part-select', (e) => {
+  const id = (e as CustomEvent<string>).detail;
+  const card = [...controlsPanel.querySelectorAll<HTMLElement>('.part-card')].find(
+    (c) => c.querySelector('.part-id')?.textContent === id,
+  );
+  if (!card) return;
+  card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  card.querySelector<HTMLElement>('input[type=number], input[type=datetime-local], input[type=checkbox]')?.focus({ preventScroll: true });
+  card.classList.remove('flash');
+  void card.offsetWidth; // restart the highlight animation
+  card.classList.add('flash');
+});
+
+// Every run() and stop() starts a new "run": a run() that is still loading (awaiting the
+// firmware or Board.create) checks this after each await and gives up if it has been
+// superseded, so a quick second Run (Ctrl+Enter twice, live-reload autorun) or a Stop
+// can never leave an orphaned board running in the background.
+let runSeq = 0;
+
 function stop() {
+  runSeq++;
   board?.stop();
   board = null;
   circuit?.detach();
@@ -123,31 +172,36 @@ function stop() {
   runButton.disabled = false;
   stopButton.disabled = true;
   serialIn.disabled = true;
-  statusText.textContent = 'Stopped';
+  setStatus('Stopped');
 }
 
 async function run() {
   stop();
+  const token = runSeq;
   files[current].content = editor.value;
   if (!drawCircuit()) return;
   runButton.disabled = true;
   serialOut.textContent = '';
   serialOut.classList.remove('empty');
-  statusText.textContent = 'Loading firmware…';
+  serialFollow.checked = true;
+  setStatus('Loading firmware…', 'busy');
 
+  let b: Board;
   try {
     const name = firmwareSelect.value;
     if (!firmwareCache.has(name)) firmwareCache.set(name, await fetchBytes(`firmware/${name}`));
     littlefsWasm ??= (await fetchBytes('littlefs.wasm')).buffer as ArrayBuffer;
     const boardFiles = files.filter((f) => f.name !== DIAGRAM);
-    board = await Board.create(firmwareCache.get(name)!, boardKindFromFirmware(name), boardFiles, littlefsWasm);
+    b = await Board.create(firmwareCache.get(name)!, boardKindFromFirmware(name), boardFiles, littlefsWasm);
   } catch (e) {
-    statusText.textContent = `Error: ${(e as Error).message}`;
+    if (token !== runSeq) return; // superseded: the newer run owns the status
+    setStatus(`Error: ${(e as Error).message}`, 'error');
     runButton.disabled = false;
     return;
   }
+  if (token !== runSeq) return; // a newer run() or a stop() came in while loading; b was never started
 
-  const b = board;
+  board = b;
   b.onSerial = appendSerial;
   circuit!.attach(b);
   b.start();
@@ -156,7 +210,7 @@ async function run() {
   serialIn.disabled = false;
   statusTimer = window.setInterval(() => {
     const simS = b.sim.clock.nanos / 1e9;
-    statusText.textContent = `Running · ${simS.toFixed(1)} s simulated · ${Math.round(b.speed * 100)}% of real time`;
+    setStatus(`Running · ${simS.toFixed(1)} s simulated · ${Math.round(b.speed * 100)}% of real time`, 'running');
   }, 250);
 }
 
@@ -202,8 +256,8 @@ loadProject()
   .then(() => {
     if (__DEV__ && sessionStorage.getItem(SESSION.autorun) === '1') {
       sessionStorage.removeItem(SESSION.autorun);
-      statusText.textContent = 'Reloaded after a file change, restarting…';
+      setStatus('Reloaded after a file change, restarting…', 'busy');
       run();
     }
   })
-  .catch((e) => (statusText.textContent = `Could not load project: ${e.message}`));
+  .catch((e) => setStatus(`Could not load project: ${e.message}`, 'error'));

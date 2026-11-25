@@ -92,6 +92,13 @@ def dan_uptime(ms):
     return "dan {}".format(int(ms) // MS_U_DANU + 1)
 
 
+def opis_greske(e):
+    """Tekst iznimke za poruku. Neke iznimke nemaju tekst (npr. onewire.OneWireError()
+    kad se senzor ne javi), pa bi poruka bila '()'; tada se ispisuje ime tipa iznimke."""
+    tekst = str(e)
+    return tekst if tekst else type(e).__name__
+
+
 def format_temp(temp):
     return "greska" if temp is None else "{:.2f}".format(temp)
 
@@ -116,6 +123,9 @@ class NadzorAlarma:
     temperatura neprekidno izvan raspona DULJE od kasnjenje_ms (strogo vece),
     mjereno od prvog mjerenja izvan raspona. Jedno mjerenje u rasponu ponistava
     odbrojavanje. Neuspjelo ocitanje (None) ne mijenja stanje.
+    S mjerenjem svakih 10 s i kasnjenjem 2 min alarm se pali na 14. mjerenju izvan
+    raspona: 130 s nakon prvog takvog mjerenja, odnosno 130-140 s nakon stvarne
+    promjene temperature (dodatno kasnjenje 10-20 s preko 2 min).
     Poruke zadnjeg poziva provjeri() nalaze se u self.poruke.
     """
 

@@ -1,6 +1,6 @@
 // Shared helpers for automated tests: boot real MicroPython with a set of files,
 // in fast-forward mode (simulated time runs as fast as the host allows).
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Board, type ProjectFile } from '../src/board.js';
 import { boardKindFromFirmware } from '../src/fs.js';
@@ -18,8 +18,11 @@ export function projectFiles(): ProjectFile[] {
 
 /** A board flashed with MicroPython and `files`, not started (use board.runFor / runUntil). */
 export async function bootBoard(files: ProjectFile[], firmware = FIRMWARE): Promise<Board> {
+  const image = join(ROOT, 'public', 'firmware', firmware);
+  // The images are downloaded, not committed (npm run test:sim / sim / dev / build fetch them).
+  if (!existsSync(image)) throw new Error(`firmware missing: ${image} (run npm run fetch-firmware)`);
   return Board.create(
-    readFileSync(join(ROOT, 'public', 'firmware', firmware)),
+    readFileSync(image),
     boardKindFromFirmware(firmware),
     files,
     readFileSync(join(ROOT, 'node_modules', 'littlefs', 'dist', 'littlefs.wasm')),

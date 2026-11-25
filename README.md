@@ -66,7 +66,8 @@ A good loop while you work:
 2. Keep **`npm run test:watch`** running in a second terminal.
 3. Edit a file in `project/` in your editor and save.
 4. The page reloads and restarts the simulation with your change, and the tests rerun
-   in the second terminal. Both take a few seconds.
+   in the second terminal. The page restarts in a few seconds; a `.py` change reruns
+   the whole test suite, which takes about a minute (single test files take seconds).
 5. When you're happy, commit and push. GitHub runs the same tests and, if they
    pass, updates the live page.
 
@@ -102,7 +103,7 @@ when the alarm fires, the daily summary maths, CSV formatting. No simulator invo
 npm run test:py
 ```
 
-### 2. Simulation tests (real MicroPython, a few seconds)
+### 2. Simulation tests (real MicroPython, about a minute)
 
 `test/*.test.ts` boot the **real MicroPython firmware** with the real project files
 on the simulated Pico and parts, then act like a person in the lab: set the sensor
@@ -110,7 +111,9 @@ to 10 °C, wait three minutes, press the button, pull the SD card out. They chec
 the serial output, the LED and the CSV files on the card.
 
 Simulated time runs as fast as your computer allows (minutes of simulated time take
-seconds), so even "too warm for 2 minutes" scenarios are quick.
+seconds), so even "too warm for 2 minutes" scenarios are quick. The whole suite takes
+about 1–1.5 minutes; a single file takes 5–60 seconds. The first run downloads the
+MicroPython firmware into `public/firmware/` (needs internet once).
 
 ```sh
 npm run test:sim                                  # all of them
@@ -142,7 +145,120 @@ Reruns tests every time you save, and only the ones that matter:
 | any `.py` file | logic tests, then simulation tests |
 | anything in `src/` or `diagram.json` | simulation tests |
 
-Press **Enter** to rerun everything, **Ctrl+C** to stop.
+At start-up and when you press **Enter** it runs everything (logic tests, then simulation
+tests); **Ctrl+C** stops it.
+
+---
+
+## Command-line simulator (npm run sim)
+
+Want to see what the program does when it gets warm for three minutes, without
+waiting three minutes or writing a test? `npm run sim` boots the real project
+(`project/*.py` + `project/diagram.json`, real MicroPython, all the parts) in your
+terminal, fast-forwards through a timeline of things you do to it, prints the serial
+output with the **simulated** time in front of each line, and ends with a summary:
+LED states, alarm messages, the files on the SD card and their last lines.
+
+Copy-paste checks for the assignment:
+
+```sh
+# 1. Normal operation: 5 °C, one minute, no alarm, LED off
+npm run sim -- --temp 5 --for 1m --expect "U_RASPONU" --expect-led led1=off
+
+# 2. Too warm for more than 2 minutes: alarm message and LED on
+npm run sim -- --temp 10 --for 2m30s --expect "[ALARM]" --expect-led led1=on
+
+# 3. Warm spell, back to normal, then the button prints the summary and the CSV tail
+npm run sim -- --temp 5 --at 30s temp=10 --at 3m30s temp=5 --at 4m press --for 5m
+
+# 4. Daily summary at midnight (the clock starts at 23:58)
+npm run sim -- --rtc "2026-11-25 23:58:00" --for 3m --expect "[DNEVNI SAZETAK]"
+
+# 5. No SD card: the program says so and keeps measuring
+npm run sim -- --sd out --for 30s --expect "kartica nije dostupna"
+```
+
+What it looks like (example 3, middle part cut):
+
+```text
+00:00:00.670  [RTC] sat: 2026-11-17 10:00:00
+00:00:00.694  [SENZOR] pronaden DS18B20 (2801005e1d0000be)
+00:00:21.495  [MJERENJE] 2026-11-17 10:00:21 | 5.00 C | U_RASPONU
+00:00:30.000  >> temp=10
+00:00:31.490  [MJERENJE] 2026-11-17 10:00:31 | 10.00 C | ODBROJAVANJE
+...
+00:02:41.472  [ALARM] temperatura 10.00 C izvan raspona 2.0-8.0 C vec 2 min 10 s
+...
+00:03:30.000  >> temp=5
+00:03:31.473  [ALARM KRAJ] temperatura 5.00 C ponovno u rasponu, ukupno izvan raspona 3 min 0 s
+00:04:00.000  >> press
+00:04:00.007  [TIPKALO] pritisak
+00:04:00.008  [SAZETAK] 2026-11-17: mjerenja 24, min 5.00 C, max 10.00 C, prosjek 8.75 C, izvan raspona 3 min 0 s, alarma 1, neuspjelih 0
+...
+
+---- summary ----
+simulated 5 min 0 s in 13.3 s wall time (22.5x)
+RTC now: rtc1 2026-11-17 10:05:00
+LEDs: led1 off
+measurements: 30
+alarm messages (2):
+  [ALARM] temperatura 10.00 C izvan raspona 2.0-8.0 C vec 2 min 10 s
+  [ALARM KRAJ] temperatura 5.00 C ponovno u rasponu, ukupno izvan raspona 3 min 0 s
+SD sd1 (inserted)
+  hladnjaca.csv  1122 B
+    2026-11-17 10:04:31,5.00,U_RASPONU
+    2026-11-17 10:04:41,5.00,U_RASPONU
+    2026-11-17 10:04:51,5.00,U_RASPONU
+```
+
+Lines starting with `>>` are your actions. In a terminal, alarms and errors are red and
+summaries cyan; when the output goes to a file or pipe there are no colours.
+
+**Things you can do on the timeline** (`--at <time> <action> [<action>...]`, times are
+simulated time since power-on, e.g. `500ms`, `30s`, `3m30s`, `1h`):
+
+| Action | Meaning |
+|---|---|
+| `temp=10` / `temp:temp1=4` | set the DS18B20 temperature (all sensors, or one by id) |
+| `press` / `press:btn1` | press the button for 300 ms |
+| `hold:btn1=2s` | hold the button down for a while |
+| `sensor=off` / `sensor=on` | unplug / plug the sensor back in |
+| `sd=out` / `sd=in` | pull the SD card out / put it back |
+| `rtc="2026-11-25 23:58:00"` | set the DS1307 clock |
+| `send="text"` | type into the serial input (`\r`, `\n`, `\x03` = Ctrl+C work) |
+
+**Options:** `--temp`, `--rtc`, `--sd in|out`, `--sensor on|off` set the starting
+conditions (the clock starts at 2026-11-17 10:00:00 unless you give `--rtc`, so runs
+are repeatable). `--for` is the total time (default: last action + 30 s, at least
+1 minute). `--until "text"` stops as soon as the text is printed. `--expect "text"`
+(repeatable) and `--expect-led led1=on|off` turn the run into a check: it ends with
+`all checks passed` or `FAIL` and exit code 1. `--quiet` prints only the summary,
+`--sd-dump some-folder` copies the card's files out so you can open the CSV,
+`--firmware pico` uses the plain Pico build, `--realtime` runs at real speed.
+`npm run sim -- --help` lists everything.
+
+**Longer scripts** go in a JSON file with the same options:
+
+```json
+{
+  "temp": 5,
+  "for": "5m",
+  "timeline": [
+    { "at": "30s", "do": "temp=10" },
+    { "at": "3m", "do": "press" },
+    { "at": "4m", "do": ["temp=5", "sd=out"] }
+  ],
+  "expect": ["[ALARM]", "[SAZETAK]", "[SD] greska pri zapisu"],
+  "expectLed": { "led1": "off" }
+}
+```
+
+```sh
+npm run sim -- scenario.json            # flags after the file add to it
+```
+
+MicroPython starting up (the first simulated second) is the slow part, a few seconds
+of wall time; after that, minutes of simulated time take seconds.
 
 ---
 
@@ -156,6 +272,7 @@ Press **Enter** to rerun everything, **Ctrl+C** to stop.
 | `npm run test:py` | Logic tests only |
 | `npm run test:sim` | Simulation tests only |
 | `npm run test:watch` | Rerun tests on every save |
+| `npm run sim -- --temp 10 --for 3m` | Run the project in the terminal, fast-forwarded ([details](#command-line-simulator-npm-run-sim)) |
 | `npm run typecheck` | Check the TypeScript of the simulator |
 | `npm run build` | Build the site into `dist/` (what GitHub Pages serves) |
 
@@ -178,6 +295,9 @@ Press **Enter** to rerun everything, **Ctrl+C** to stop.
   - **microSD**: untick *inserted* to pull the card out. The file list shows what the
     program wrote (size, and when it last changed); **view** opens a file, **download**
     saves it. The card keeps its files between runs, like a real card; **Erase** formats it.
+    The button prints only the last 10 CSV rows. To get the whole file through the serial
+    monitor instead (e.g. in Wokwi, which has no download), press **Ctrl+C** in the
+    monitor and type `ispisi_csv(None)`.
   - If a part is wired wrongly (say, the card's DO on a pin that isn't an SPI RX pin),
     the panel says what's wrong, the part gets a red dashed outline in the circuit, and
     the program sees no part there, as on a real breadboard.
@@ -221,6 +341,15 @@ GND, it stays dark, just like on a real breadboard.
 | `wokwi-ds1307` | `GND`, `5V`, `SDA`, `SCL`, `SQW` | SDA and SCL on one I²C controller: I2C0 SDA GP0/4/8/12/16/20/28 with SCL GP1/5/9/13/17/21; I2C1 SDA GP2/6/10/14/18/22/26 with SCL GP3/7/11/15/19/27. 5V on VBUS or VSYS (on 3V3 the chip doesn't answer) |
 
 Every part also needs its GND wired to a GND pin and its supply pin to a supply pin.
+A GPIO can serve only one part pin: if two part pins land on the same GPIO, the later part
+is not attached. A button or LED on a GPIO that a part uses does nothing in the simulator;
+one wired straight to that GPIO gets a warning, one behind a resistor does not. A wire end
+that names a part or pin that doesn't exist (a typo) is reported too. All of these show
+up as warnings at the top of the Parts panel.
+
+> **Real hardware:** many DS1307 modules have their own I²C pull-up resistors to the
+> module's 5 V. On a real Pico that puts 5 V on GP8/GP9, which the RP2040 is not rated
+> for. Remove those pull-ups (or use a module without them) and pull SDA/SCL up to 3V3.
 
 Our project's wiring (`project/diagram.json`):
 
@@ -252,7 +381,8 @@ previous version and the run is marked red on GitHub's *Actions* tab.
 | Problem | Fix |
 |---|---|
 | `npm run test:py` says *No Python interpreter found* | Install Python 3, or point to it: `PYTHON=/path/to/python npm run test:py` |
-| Port 8080 is busy | Another `npm run dev` is still running; close it |
+| Port 8080 is busy | Usually another `npm run dev` is still running; close it, or use another port: `PORT=8081 npm run dev` |
+| Tests fail with *firmware missing* | Run `npm run fetch-firmware` once (needs internet); `npm run test:sim`, `sim`, `dev` and `build` do it for you |
 | The page shows old code after a push | Hard-refresh: **Ctrl+F5** (GitHub Pages caches for a few minutes) |
 | Nothing printed in the serial monitor | Check the status bar for an error; press **Ctrl+C** in the monitor to see if the REPL answers |
 | Firmware download fails | Check the internet connection once; it's cached in `public/firmware/` afterwards |

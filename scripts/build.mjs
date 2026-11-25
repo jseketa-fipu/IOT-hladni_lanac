@@ -57,7 +57,17 @@ const options = {
 if (serve) {
   const ctx = await esbuild.context(options);
   await ctx.watch();
-  const { port } = await ctx.serve({ servedir: 'dist', port: 8080 });
+  // PORT=8081 npm run dev picks another port.
+  const wanted = Number(process.env.PORT) || 8080;
+  let port;
+  try {
+    ({ port } = await ctx.serve({ servedir: 'dist', port: wanted }));
+  } catch (e) {
+    console.error(`Could not serve on port ${wanted}: ${e.message.split('\n')[0]}`);
+    console.error('Close the other server (often an earlier npm run dev), or use another port: PORT=8081 npm run dev');
+    await ctx.dispose();
+    process.exit(1);
+  }
 
   let timer = null;
   const onStaticChange = (dir) => (_event, file) => {

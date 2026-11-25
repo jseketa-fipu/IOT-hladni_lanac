@@ -19,6 +19,7 @@ from hladni_lanac import (  # noqa: E402
     format_datum_vrijeme,
     format_trajanje,
     format_uptime,
+    opis_greske,
     redak_csv,
     redak_mjerenja,
     u_rasponu,
@@ -286,6 +287,14 @@ class Oblikovanje(unittest.TestCase):
         self.assertEqual(ZAGLAVLJE_CSV, "datum_vrijeme,temperatura_c,stanje")
         self.assertEqual(redak_csv("2026-11-17 14:05:30", 5.0, U_RASPONU), "2026-11-17 14:05:30,5.00,U_RASPONU")
         self.assertEqual(redak_csv("+00:00:10", None, ODBROJAVANJE), "+00:00:10,greska,ODBROJAVANJE")
+
+    def test_opis_greske(self):
+        class OneWireError(Exception):
+            pass
+
+        self.assertEqual(opis_greske(OneWireError()), "OneWireError")
+        self.assertEqual(opis_greske(OSError(5, "EIO")), str(OSError(5, "EIO")))
+        self.assertEqual(opis_greske(ValueError("los CRC")), "los CRC")
 
     def test_redak_mjerenja(self):
         self.assertEqual(redak_mjerenja("+00:00:10", 4.5, U_RASPONU), "[MJERENJE] +00:00:10 | 4.50 C | U_RASPONU")

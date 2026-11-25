@@ -17,7 +17,7 @@
       </select>
       <button id="run" class="primary" title="Ctrl+Enter">▶ Run</button>
       <button id="stop" disabled>■ Stop</button>
-      <span id="status" class="status">Ready</span>
+      <span id="status" class="status" role="status" data-state="idle">Ready</span>
     </header>
 
     <main>
@@ -28,9 +28,14 @@
       </section>
 
       <section class="board">
-        <h2>Circuit <span class="sub">from diagram.json · press the button with the mouse</span></h2>
+        <h2>Circuit <span class="sub">from diagram.json · click and hold the button to press it · click a part to set it up</span></h2>
         <div id="circuit" class="circuit"></div>
-        <h2>Serial monitor</h2>
+        <div class="section-head">
+          <h2>Serial monitor</h2>
+          <label class="check small" title="Keep the newest output in view"><input id="serial-follow" type="checkbox" checked /> auto-scroll</label>
+          <button id="serial-copy" type="button" class="small-btn">Copy</button>
+          <button id="serial-clear" type="button" class="small-btn">Clear</button>
+        </div>
         <pre id="serial" class="serial empty">Press ▶ Run to start the Pico. Its output appears here.</pre>
         <input id="serial-input" class="serial-input" placeholder="Type and press Enter · Ctrl+C interrupts" disabled />
       </section>

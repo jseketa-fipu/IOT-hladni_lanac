@@ -14,7 +14,8 @@ let timer = null;
 function steps(changed) {
   const testFile = [...changed].find((f) => /^test[\\/][^\\/]+\.test\.ts$/.test(f));
   if (changed.size === 1 && testFile) return [['node', [...SIM, testFile]]];
-  const py = [...changed].some((f) => f.endsWith('.py'));
+  // Nothing named (start-up, Enter) = everything: Python logic tests too.
+  const py = changed.size === 0 || [...changed].some((f) => f.endsWith('.py'));
   const all = ['node', [...SIM, 'test/**/*.test.ts']];
   return py ? [['node', ['scripts/test-python.mjs']], all] : [all];
 }

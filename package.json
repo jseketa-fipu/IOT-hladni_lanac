@@ -9,8 +9,12 @@
     "test": "npm run test:py && npm run test:sim",
     "typecheck": "tsc --noEmit",
     "test:py": "node scripts/test-python.mjs",
+    "pretest:sim": "node scripts/fetch-firmware.mjs",
     "test:sim": "node --import tsx --test --test-reporter=spec \"test/**/*.test.ts\"",
+    "preheadless": "node scripts/fetch-firmware.mjs",
     "headless": "tsx test/headless.ts",
+    "presim": "node scripts/fetch-firmware.mjs",
+    "sim": "tsx scripts/sim.ts",
     "test:watch": "node scripts/test-watch.mjs"
   },
   "keywords": [],

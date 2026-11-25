@@ -70,6 +70,12 @@ describe('wiring checks (no board needed)', () => {
     ['RTC SCL on the other I2C', rewire('pico:GP9', 'pico:GP11'), 'rtc1: SCL must connect to an I2C SCL pin (GP1/5/9/13/17/21 for I2C0, like SDA)'],
     ['DS18B20 without pull-up', withoutPullUp(), 'temp1: DQ needs a pull-up resistor (4.7 kΩ) to 3V3'],
     ['DS18B20 parasite power', { ...withoutPart('r2'), connections: [...withoutPart('r2').connections, ['temp1:DQ', 'pico:GP15', '', []], ['temp1:VCC', 'pico:GND.6', '', []]] }, 'temp1: parasite power (VCC on GND) is not supported'],
+    // One GPIO, two roles: the later part (diagram order sd1, rtc1, temp1) is not attached.
+    ['SD CS on the DS18B20 DQ pin', rewire('pico:GP5', 'pico:GP15'), 'temp1: DQ (GP15) is already used by sd1 CS'],
+    ['SD CS on the SD DI pin', rewire('pico:GP5', 'pico:GP3'), 'sd1: CS (GP3) is already used by sd1 DI'],
+    ['DS18B20 DQ on the SD DO pin', rewire('pico:GP15', 'pico:GP4'), 'temp1: DQ (GP4) is already used by sd1 DO'],
+    ['SD CS on the button pin', rewire('pico:GP5', 'pico:GP14'), 'btn1: GP14 belongs to sd1 CS, so btn1 on it is ignored'],
+    ['typo in a button wire', rewire('btn1:2.r', 'btn1:2.x'), 'connection 19 (btn1:2.x - pico:GP14): btn1 has no pin "2.x"'],
     ['DS18B20 DQ on two GPIOs', { ...projectDiagram(), connections: [...projectDiagram().connections, ['temp1:DQ', 'pico:GP13', 'orange', []]] }, 'temp1: DQ is connected to several GPIOs (GP13, GP15)'],
   ];
   for (const [name, diagram, warning] of cases) {
@@ -78,6 +84,29 @@ describe('wiring checks (no board needed)', () => {
       assert.deepEqual(system.warnings, [warning]);
     });
   }
+
+  test('wire ends with an unknown pin or part are named', () => {
+    assert.deepEqual(new CircuitSystem(rewire('pico:GP5', 'pico:GP99'), null).warnings, [
+      'connection 5 (sd1:CS - pico:GP99): pico has no pin "GP99"',
+      'sd1: CS is not connected to a GPIO',
+    ]);
+    assert.deepEqual(new CircuitSystem(rewire('sd1:CS', 'sdX:CS'), null).warnings, [
+      'connection 5 (sdX:CS - pico:GP5): there is no part "sdX"',
+      'sd1: CS is not connected to a GPIO',
+    ]);
+  });
+
+  test("Wokwi's virtual $serialMonitor wires are not typos", () => {
+    const d = projectDiagram();
+    d.connections.push(['pico:GP0', '$serialMonitor:RX', '', []], ['pico:GP1', '$serialMonitor:TX', '', []]);
+    assert.deepEqual(new CircuitSystem(d, null).warnings, []);
+  });
+
+  test('a part on a GPIO that is already taken is not attached', () => {
+    const system = new CircuitSystem(rewire('pico:GP5', 'pico:GP15'), null);
+    assert.deepEqual(system.pinsOf('sd1'), { SCK: 2, DI: 3, DO: 4, CS: 15, spi: 0 });
+    assert.equal(system.pinsOf('temp1'), undefined);
+  });
 
   test('a pull-up resistor is not a power wire', () => {
     // DS18B20 VCC fed through a resistor (r9) only; the DQ pull-up r2 still goes to 3V3.

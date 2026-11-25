@@ -76,7 +76,7 @@ def init_rtc():
         print("[RTC] sat: {}".format(hl.format_datum_vrijeme(dt)))
     except Exception as e:
         rtc = None
-        print("[RTC] sat nije dostupan ({}), koristim vrijeme od pokretanja (+HH:MM:SS)".format(e))
+        print("[RTC] sat nije dostupan ({}), koristim vrijeme od pokretanja (+HH:MM:SS)".format(hl.opis_greske(e)))
 
 
 def procitaj_vrijeme(od_pokretanja_ms):
@@ -88,7 +88,7 @@ def procitaj_vrijeme(od_pokretanja_ms):
             return hl.format_datum_vrijeme(dt), hl.format_datum(dt)
         except Exception as e:
             rtc = None
-            print("[RTC] greska citanja ({}), prelazim na vrijeme od pokretanja".format(e))
+            print("[RTC] greska citanja ({}), prelazim na vrijeme od pokretanja".format(hl.opis_greske(e)))
     return hl.format_uptime(od_pokretanja_ms), hl.dan_uptime(od_pokretanja_ms)
 
 
@@ -126,7 +126,7 @@ def _dodaj_redak(putanja, zaglavlje, redak):
         return True
     except OSError as e:
         if not _sd_greska_ispisana:
-            print("[SD] greska pri zapisu u {} ({})".format(putanja, e))
+            print("[SD] greska pri zapisu u {} ({})".format(putanja, hl.opis_greske(e)))
             _sd_greska_ispisana = True
         return False
 
@@ -141,7 +141,7 @@ def init_sd():
         os.mount(kartica, "/sd")
     except Exception as e:
         sd_ok = False
-        print("[SD] kartica nije dostupna ({}), mjerenja se ne zapisuju".format(e))
+        print("[SD] kartica nije dostupna ({}), mjerenja se ne zapisuju".format(hl.opis_greske(e)))
         return
     sd_ok = True
     print("[SD] kartica montirana na /sd")
@@ -160,7 +160,7 @@ def init_sd():
             print("[SD] nova datoteka {}, zapisano zaglavlje".format(CSV_PUTANJA))
     except OSError as e:
         sd_ok = False
-        print("[SD] greska pri pristupu {} ({}), mjerenja se ne zapisuju".format(CSV_PUTANJA, e))
+        print("[SD] greska pri pristupu {} ({}), mjerenja se ne zapisuju".format(CSV_PUTANJA, hl.opis_greske(e)))
 
 
 def zapisi_csv(datum_vrijeme, temp, stanje):
@@ -169,28 +169,48 @@ def zapisi_csv(datum_vrijeme, temp, stanje):
         broj_redaka += 1
 
 
-def ispisi_csv():
-    """Ispise zaglavlje i zadnjih ZADNJIH_REDAKA redaka CSV-a (cita samo kraj datoteke)."""
+def ispisi_csv(n=ZADNJIH_REDAKA):
+    """Ispise zaglavlje i zadnjih n redaka CSV-a (cita samo kraj datoteke).
+
+    ispisi_csv(None) ispise cijelu datoteku, redak po redak (za prijenos podataka s
+    kartice kad nema druge mogucnosti, npr. u Wokwiju): u serijskom monitoru Ctrl+C
+    zaustavi program, pa u REPL-u upisati ispisi_csv(None).
+    """
     if not sd_ok:
         print("[CSV] kartica nije dostupna, nema zapisa")
+        return
+    if n is None:
+        _ispisi_cijeli_csv()
         return
     try:
         with open(CSV_PUTANJA, "rb") as f:
             velicina = f.seek(0, 2)
-            od = max(0, velicina - 100 * (ZADNJIH_REDAKA + 1))
+            od = max(0, velicina - 100 * (n + 1))
             f.seek(od)
             kraj = f.read().decode()
     except OSError as e:
-        print("[CSV] greska pri citanju {} ({})".format(CSV_PUTANJA, e))
+        print("[CSV] greska pri citanju {} ({})".format(CSV_PUTANJA, hl.opis_greske(e)))
         return
     retci = [r for r in kraj.split("\n") if r]
     if od > 0 and retci:
         retci = retci[1:]  # prvi redak je mozda odrezan
-    retci = [r for r in retci if r != hl.ZAGLAVLJE_CSV][-ZADNJIH_REDAKA:]
+    retci = [r for r in retci if r != hl.ZAGLAVLJE_CSV][-n:]
     print("[CSV] --- {}: zadnjih {} od {} redaka ---".format(CSV_PUTANJA, len(retci), broj_redaka))
     print(hl.ZAGLAVLJE_CSV)
     for r in retci:
         print(r)
+    print("[CSV] --- kraj ---")
+
+
+def _ispisi_cijeli_csv():
+    print("[CSV] --- {}: cijela datoteka ---".format(CSV_PUTANJA))
+    try:
+        with open(CSV_PUTANJA) as f:
+            for redak in f:   # redak po redak, bez ucitavanja cijele datoteke u RAM
+                print(redak.rstrip("\n"))
+    except OSError as e:
+        print("[CSV] greska pri citanju {} ({})".format(CSV_PUTANJA, hl.opis_greske(e)))
+        return
     print("[CSV] --- kraj ---")
 
 
@@ -222,7 +242,7 @@ def init_senzor():
         ds = ds18x20.DS18X20(onewire.OneWire(Pin(15)))
     except Exception as e:
         ds = None
-        print("[SENZOR] greska pri pokretanju 1-Wire ({})".format(e))
+        print("[SENZOR] greska pri pokretanju 1-Wire ({})".format(hl.opis_greske(e)))
         return
     if not _trazi_senzor():
         print("[SENZOR] DS18B20 nije pronaden na GP15 (provjerite spoj i otpornik 4.7k), trazim ga pri svakom mjerenju")
@@ -247,7 +267,7 @@ def pokreni_mjerenje():
         ds.convert_temp()
         _pretvorba_ok = True
     except Exception as e:  # onewire.OneWireError nije OSError
-        _greska_senzora("pretvorba nije uspjela ({})".format(e))
+        _greska_senzora("pretvorba nije uspjela ({})".format(hl.opis_greske(e)))
 
 
 def procitaj_temp():
@@ -264,7 +284,7 @@ def procitaj_temp():
     try:
         sirovo = ds.read_temp(rom)
     except Exception as e:  # CRC greska ili senzor iskopcan
-        _greska_senzora("citanje nije uspjelo ({})".format(e))
+        _greska_senzora("citanje nije uspjelo ({})".format(hl.opis_greske(e)))
         return None
     temp = hl.valjano_ocitanje(sirovo)
     if temp is None:
@@ -324,7 +344,10 @@ def obradi_mjerenje(temp, zakazano_ms):
     """
     global _prethodno_mjerenje_ms, _mjerenje_od_pokretanja_ms
     if _prethodno_mjerenje_ms is None:
-        dt_ms = 0
+        # Prvo mjerenje: broji se kao da je prethodno bilo INTERVAL ranije, da vrijeme
+        # izvan raspona u sazetku bude jednako onome u poruci [ALARM KRAJ] (koja broji od
+        # prvog mjerenja izvan raspona) i kad je temperatura izvan raspona vec pri pokretanju.
+        dt_ms = INTERVAL_MJERENJA_MS
         _mjerenje_od_pokretanja_ms = time.ticks_diff(zakazano_ms, _start_ms)
     else:
         dt_ms = time.ticks_diff(zakazano_ms, _prethodno_mjerenje_ms)

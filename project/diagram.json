@@ -32,7 +32,7 @@
     [ "r1:2", "led1:A", "green", [ "v20" ] ],
     [ "led1:C", "pico:GND.5", "black", [ "v8", "h23", "v-123.8" ] ],
     [ "btn1:2.r", "pico:GP14", "blue", [] ],
-    [ "btn1:1.r", "pico:GND.4", "black", [ "h20", "v9.4" ] ]
+    [ "btn1:1.l", "pico:GND.4", "black", [ "h-10", "v-25", "h100", "v34.4" ] ]
   ],
   "dependencies": {}
 }
