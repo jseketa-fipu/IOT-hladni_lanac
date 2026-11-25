@@ -17,6 +17,16 @@
       </select>
       <button id="run" class="primary" title="Ctrl+Enter">▶ Run</button>
       <button id="stop" disabled>■ Stop</button>
+      <label class="speed" title="How fast simulated time runs. The program and its timing are the same at every speed; 10× lets you see a 2-minute alarm in about 12 seconds.">
+        Speed
+        <select id="speed" aria-label="Simulation speed">
+          <option value="1">1× real time</option>
+          <option value="5">5×</option>
+          <option value="10">10×</option>
+          <option value="20">20×</option>
+          <option value="1000">Max</option>
+        </select>
+      </label>
       <span id="status" class="status" role="status" data-state="idle">Ready</span>
     </header>
 

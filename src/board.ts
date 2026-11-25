@@ -40,8 +40,9 @@ export class Board {
 
   /** Called with every chunk of text MicroPython prints over USB serial. */
   onSerial: (text: string) => void = () => {};
-  /** Simulated seconds per real second (smoothed). 1 = real time. */
+  /** Simulated seconds per real second actually achieved (smoothed). 1 = real time. */
   speed = 0;
+  private scale = 1;
 
   private running = false;
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -119,7 +120,27 @@ export class Board {
     this.running = true;
     this.realStartMs = performance.now();
     this.simStartNs = this.sim.clock.nanos;
+    this.speed = this.scale; // assume on target until measured otherwise
+    this.lastTickMs = 0;
     this.tick();
+  }
+
+  /**
+   * Requested speed while running in real time: 1 = real time, 10 = ten simulated
+   * seconds per real second. The program and simulated time are unaffected; only how
+   * fast simulated time passes on screen. If the host can't keep up, `speed` shows
+   * what is actually achieved.
+   */
+  get timeScale() {
+    return this.scale;
+  }
+  set timeScale(value: number) {
+    if (!(value > 0)) throw new Error('timeScale must be > 0');
+    // Re-anchor so the change applies from now on, without a jump in simulated time.
+    this.realStartMs = performance.now();
+    this.simStartNs = this.sim.clock.nanos;
+    this.scale = value;
+    this.speed = value;
   }
 
   stop() {
@@ -165,7 +186,7 @@ export class Board {
     const clock = this.sim.clock;
     const now = performance.now();
     const budgetEnd = now + 15; // keep the page responsive
-    let targetNs = this.simStartNs + (now - this.realStartMs) * 1e6;
+    const targetNs = this.simStartNs + (now - this.realStartMs) * 1e6 * this.scale;
     const sliceStartNs = clock.nanos;
 
     while (this.running && clock.nanos < targetNs) {
@@ -173,17 +194,18 @@ export class Board {
       if (performance.now() > budgetEnd) break;
     }
 
-    // If emulation is slower than real time, don't try to catch up forever:
-    // let simulated time fall behind and report the speed instead.
-    const lagNs = targetNs - clock.nanos;
-    if (lagNs > 100e6) {
-      this.realStartMs += lagNs / 1e6;
-      targetNs = clock.nanos;
+    // If emulation is slower than requested, don't try to catch up forever:
+    // let simulated time fall behind and report the achieved speed instead.
+    if (targetNs - clock.nanos > 100e6 * this.scale) {
+      this.realStartMs = now;
+      this.simStartNs = clock.nanos;
     }
     if (this.lastTickMs) {
       const wallMs = now - this.lastTickMs;
       const simMs = (clock.nanos - sliceStartNs) / 1e6;
-      if (wallMs > 0) this.speed = 0.9 * this.speed + 0.1 * (simMs / wallMs);
+      // Smooth over about half a second of wall time, however often ticks run.
+      const alpha = 1 - Math.exp(-wallMs / 500);
+      if (wallMs > 0) this.speed += alpha * (simMs / wallMs - this.speed);
     }
     this.lastTickMs = now;
 

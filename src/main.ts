@@ -9,10 +9,11 @@ import staticVersion from 'virtual:static-version';
 
 const DIAGRAM = 'diagram.json';
 // Survive dev-server live reloads: which tab/firmware was open and whether it was running.
-const SESSION = { autorun: 'pico-sim:autorun', tab: 'pico-sim:tab', firmware: 'pico-sim:firmware' };
+const SESSION = { autorun: 'pico-sim:autorun', tab: 'pico-sim:tab', firmware: 'pico-sim:firmware', speed: 'pico-sim:speed' };
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const firmwareSelect = $<HTMLSelectElement>('firmware');
+const speedSelect = $<HTMLSelectElement>('speed');
 const runButton = $<HTMLButtonElement>('run');
 const stopButton = $<HTMLButtonElement>('stop');
 const statusText = $('status');
@@ -204,13 +205,14 @@ async function run() {
   board = b;
   b.onSerial = appendSerial;
   circuit!.attach(b);
+  b.timeScale = Number(speedSelect.value);
   b.start();
 
   stopButton.disabled = false;
   serialIn.disabled = false;
   statusTimer = window.setInterval(() => {
     const simS = b.sim.clock.nanos / 1e9;
-    setStatus(`Running · ${simS.toFixed(1)} s simulated · ${Math.round(b.speed * 100)}% of real time`, 'running');
+    setStatus(`Running · ${formatSimTime(simS)} simulated · ${speedText(b)}`, 'running');
   }, 250);
 }
 
@@ -241,6 +243,31 @@ stopButton.onclick = stop;
 const savedFirmware = sessionStorage.getItem(SESSION.firmware);
 if (savedFirmware && [...firmwareSelect.options].some((o) => o.value === savedFirmware)) firmwareSelect.value = savedFirmware;
 firmwareSelect.onchange = () => sessionStorage.setItem(SESSION.firmware, firmwareSelect.value);
+
+const savedSpeed = sessionStorage.getItem(SESSION.speed);
+if (savedSpeed && [...speedSelect.options].some((o) => o.value === savedSpeed)) speedSelect.value = savedSpeed;
+speedSelect.onchange = () => {
+  sessionStorage.setItem(SESSION.speed, speedSelect.value);
+  if (board) board.timeScale = Number(speedSelect.value); // applies at once, also while running
+};
+
+/** "42.3 s" below two minutes, "2 min 10 s" above. */
+function formatSimTime(s: number) {
+  if (s < 120) return `${s.toFixed(1)} s`;
+  const m = Math.floor(s / 60);
+  return m < 60 ? `${m} min ${Math.floor(s % 60)} s` : `${Math.floor(m / 60)} h ${m % 60} min`;
+}
+
+/** At 1×: "100% of real time". Faster: the requested speed, plus what is achieved if it falls short. */
+function speedText(b: Board) {
+  const target = b.timeScale;
+  if (target === 1) return `${Math.round(b.speed * 100)}% of real time`;
+  const achieved = b.speed;
+  // Booting MicroPython and finding the parts takes real CPU time; judge the speed after that.
+  if (b.simMs < 3000) return target >= 1000 ? 'max speed, starting' : `${target}×, starting`;
+  if (target >= 1000) return `max speed, ${achieved.toFixed(1)}× real time`;
+  return achieved >= target * 0.9 ? `${target}× real time` : `${target}× requested, reaching ${achieved.toFixed(1)}×`;
+}
 
 if (__DEV__) {
   // Live reload from `npm run dev`: esbuild signals a rebuild (src/, project/ or public/ changed).

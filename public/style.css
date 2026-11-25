@@ -726,3 +726,25 @@ textarea {
     min-height: 260px;
   }
 }
+
+.speed {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* Keep the header tidy on narrow screens: words stay together, the status wraps below. */
+header {
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+
+header h1,
+header button,
+header select,
+.speed {
+  white-space: nowrap;
+  flex-shrink: 0;
+}

@@ -117,6 +117,22 @@ try {
     if (later !== stopped) throw new Error(`serial output grew after Stop (${stopped} -> ${later} chars)`);
   });
 
+  await step('speed 10x, 10 C -> alarm after 2 min 10 s simulated, LED lit, within 40 s real time', async () => {
+    await page.select('#speed', '10');
+    await page.$eval('input[type=range][data-sensor="temp1"]', (el) => {
+      el.value = '10';
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await page.click('#run');
+    await waitSerial('[ALARM] temperatura 10.00 C', 40000);
+    await new Promise((r) => setTimeout(r, 500));
+    if (!(await page.$eval('wokwi-led', (el) => !!el.value))) throw new Error('LED not lit during the alarm');
+    const status = await page.$eval('#status', (el) => el.textContent);
+    if (!status.includes('10× real time')) throw new Error(`status: ${status}`);
+    await page.click('#stop');
+    await page.select('#speed', '1');
+  });
+
   ok = errors.length === 0;
 } catch {
   ok = false;

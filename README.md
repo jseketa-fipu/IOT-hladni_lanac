@@ -282,6 +282,12 @@ of wall time; after that, minutes of simulated time take seconds.
 
 - **▶ Run / ■ Stop**: start or stop the Pico. Each Run is a fresh power-on.
 - **Board**: Pico W or Pico, both with MicroPython 1.22 (the version Wokwi uses).
+- **Speed**: how fast simulated time runs: 1× (real time), 5×, 10×, 20× or Max.
+  The program behaves exactly the same at every speed; only the wait changes. The
+  LED alarm needs the temperature out of range for **more than 2 minutes**: at 10×
+  that's about 13 seconds instead. A browser reaches roughly 20–25× at most; if a
+  speed can't be reached, the status bar says what it actually gets. You can change
+  the speed while the program runs.
 - **Circuit**: the wiring from `diagram.json`. Parts react live: the LED lights, and
   you can click the button. The status bar shows simulated time and speed
   (100 % means real time).
