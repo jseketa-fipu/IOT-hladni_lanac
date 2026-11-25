@@ -16,7 +16,13 @@ in the cold-chain assignment, so the whole group can work through one Git repo.
 - **Parts**: `src/main.ts` connects the LED (GP16) and button (GP14 to GND) to the
   emulated pins. The serial monitor is MicroPython's USB serial (REPL included).
 - **Timing**: an execution loop keeps simulated time in step with real time
-  (rp2040js on its own runs flat out and skips over sleeps).
+  (rp2040js on its own runs flat out and skips over sleeps). When the program sleeps,
+  the CPU waits (WFE) and the clock jumps to the next timer alarm, so an idle board costs
+  almost nothing and runs at 1.0x real time.
+- **USB serial fix**: rp2040js's emulated USB host answers every receive request
+  immediately, with an empty packet if it has nothing to send. MicroPython re-arms at once,
+  which caused ~35,000 USB interrupts per second and held the board at ~20 % speed.
+  `Board` holds those requests until there is input, like a real host does.
 
 ## Working on it
 
@@ -49,12 +55,6 @@ experiments only; it doesn't save anywhere.
 
 ## Known limitations (proof of concept)
 
-- **Runs at ~20–35 % of real time.** rp2040js does ~20 MIPS in V8, and MicroPython
-  busy-waits while sleeping, so the CPU is busy ~94 % of the time even when the program
-  is idle. Simulated time is still exact (a 10 s interval is 10 simulated seconds, it just
-  takes longer to watch). Pretending a slower CPU clock was tried and fails: boot hangs,
-  and if switched on after boot, USB serial stalls after a second or two.
-  Next idea: detect MicroPython's idle loop and fast-forward to the next timer alarm.
 - **Writes to flash don't persist**: files are written once at start. A program can't
   save files to the internal filesystem (the microSD card part will be separate anyway).
 - **Pico W**: the firmware boots and runs, but the wireless chip isn't emulated, so no

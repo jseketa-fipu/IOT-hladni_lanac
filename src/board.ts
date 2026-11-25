@@ -47,6 +47,8 @@ export class Board {
   private simStartNs = 0;
   private lastTickMs = 0;
   private txQueue: number[] = [];
+  private pendingRead: { endpoint: number; size: number } | null = null;
+  private cdcRead!: (endpoint: number, size: number) => void;
   private decoder = new TextDecoder();
   private received = '';
   private waiters: { text: string; from: number; resolve: () => void }[] = [];
@@ -69,6 +71,20 @@ export class Board {
         w.resolve();
         return false;
       });
+    };
+
+    // rp2040js's emulated host answers every OUT-endpoint read at once, with an empty
+    // packet when it has nothing to send. MicroPython re-arms the endpoint immediately,
+    // so idle serial turns into ~35,000 USB interrupts per second and the CPU never
+    // gets to sleep. A real host stays silent (NAKs) until it has data: do the same.
+    const usb = this.mcu.usbCtrl;
+    this.cdcRead = usb.onEndpointRead!;
+    usb.onEndpointRead = (endpoint, size) => {
+      if (this.cdc.txFIFO.itemCount === 0) {
+        this.pendingRead = { endpoint, size };
+      } else {
+        this.cdcRead(endpoint, size);
+      }
     };
 
     // Nothing is wired to the inputs yet: let them read high, as a pull-up would.
@@ -122,14 +138,19 @@ export class Board {
   private flushTx() {
     const fifo = this.cdc.txFIFO;
     while (this.txQueue.length && !fifo.full) this.cdc.sendSerialByte(this.txQueue.shift()!);
+    if (this.pendingRead && fifo.itemCount > 0) {
+      const { endpoint, size } = this.pendingRead;
+      this.pendingRead = null;
+      this.cdcRead(endpoint, size);
+    }
   }
 
   /**
    * Run the CPU until simulated time catches up with real time.
    * rp2040js on its own runs as fast as possible and jumps over sleeps,
    * so without this a sleep_ms(500) would pass instantly.
-   * The emulator manages ~20 MIPS in V8 and MicroPython busy-waits while sleeping,
-   * so in practice the board runs at ~0.2x real time; simulated time stays exact.
+   * The emulator manages ~20 MIPS in V8; when the program sleeps, the core waits
+   * (WFE) and the clock jumps straight to the next timer alarm.
    */
   private tick = () => {
     if (!this.running) return;

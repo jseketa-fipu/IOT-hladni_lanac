@@ -44,13 +44,21 @@ console.log(`\n[boot took ${((performance.now() - t0) / 1000).toFixed(1)} s]`);
 setTimeout(() => board.pin(14).setInputValue(false), (seconds * 1000) / 2);
 setTimeout(() => board.pin(14).setInputValue(true), (seconds * 1000) / 2 + 300);
 
-setTimeout(() => {
+setTimeout(async () => {
+  // Serial input still reaches MicroPython: interrupt main.py and use the REPL.
+  const answer = board.waitFor('42', 5000);
+  board.send('\x03');
+  await board.waitFor('>>> ', 5000).catch(() => fail('no REPL prompt after Ctrl+C'));
+  board.send('print(6*7)\r');
+  await answer.catch(() => fail('REPL did not answer'));
+
   board.stop();
   const simS = board.sim.clock.nanos / 1e9;
   console.log(`\n[simulated ${simS.toFixed(1)} s, LED toggled ${ledToggles}x, speed ~${board.speed.toFixed(2)}x]`);
   // main.py toggles every 500 ms of simulated time.
   const expected = Math.floor(simS / 0.5); // first toggle at t=0 is a setup Low->High
   if (ledToggles < expected - 1 || ledToggles > expected + 2) fail(`expected ~${expected} LED toggles`);
+  if (board.speed < 0.9) fail(`too slow: ${board.speed.toFixed(2)}x real time`);
   console.log(`PASS (${firmwareName})`);
   process.exit(0);
 }, seconds * 1000);
