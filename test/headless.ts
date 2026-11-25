@@ -11,7 +11,9 @@ const arg = (name: string, fallback: string) => {
 const firmwareName = arg('--firmware', 'RPI_PICO-20231227-v1.22.0.uf2');
 const seconds = Number(arg('--seconds', '4'));
 
-const files = readdirSync('project').map((name) => ({ name, content: readFileSync(`project/${name}`, 'utf8') }));
+const files = readdirSync('project')
+  .filter((name) => name !== 'diagram.json')
+  .map((name) => ({ name, content: readFileSync(`project/${name}`, 'utf8') }));
 const board = await Board.create(
   readFileSync(`public/firmware/${firmwareName}`),
   boardKindFromFirmware(firmwareName),

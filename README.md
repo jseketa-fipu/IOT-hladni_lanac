@@ -13,8 +13,14 @@ in the cold-chain assignment, so the whole group can work through one Git repo.
 - **Your files**: everything in `project/` is packed into a LittleFS image
   ([littlefs-wasm](https://github.com/wokwi/littlefs-wasm)) and placed where MicroPython
   mounts its filesystem. On start, MicroPython runs `main.py` by itself, like in Wokwi.
-- **Parts**: `src/main.ts` connects the LED (GP16) and button (GP14 to GND) to the
-  emulated pins. The serial monitor is MicroPython's USB serial (REPL included).
+- **Circuit**: `project/diagram.json` uses Wokwi's format (parts, connections, `h`/`v`
+  wire waypoints). The page draws it with Wokwi's open-source part graphics
+  ([@wokwi/elements](https://github.com/wokwi/wokwi-elements), MIT) and its own Pico
+  drawing, then simulates the wiring: pins are grouped into nets, so an LED lights only
+  if its anode really connects to a high pin and its cathode to GND, and a pressed button
+  pulls whatever GPIO it is wired to. Change the wiring in `diagram.json`, not in code.
+  Supported so far: `board-pi-pico(-w)`, `wokwi-led`, `wokwi-resistor`, `wokwi-pushbutton`.
+- **Serial monitor**: MicroPython's USB serial, REPL included.
 - **Timing**: an execution loop keeps simulated time in step with real time
   (rp2040js on its own runs flat out and skips over sleeps). When the program sleeps,
   the CPU waits (WFE) and the clock jumps to the next timer alarm, so an idle board costs
@@ -48,7 +54,9 @@ experiments only; it doesn't save anywhere.
 | `project/` | The MicroPython program that runs on the board |
 | `src/board.ts` | Board: firmware loading, real-time execution loop, USB serial |
 | `src/fs.ts` | Builds the LittleFS image with the project files |
-| `src/main.ts` | Page UI: editor, LED, button, serial monitor |
+| `src/main.ts` | Page UI: editor tabs, run/stop, serial monitor |
+| `src/circuit.ts` | Draws `diagram.json` and simulates the wiring (nets, LED, buttons) |
+| `src/pico-svg.ts` | Pico / Pico W drawing and pin map |
 | `src/bootrom.ts` | RP2040 boot ROM (from the rp2040js demo) |
 | `public/` | Static page; firmware is downloaded into `public/firmware/` |
 | `test/` | Headless Node test and headless Chrome smoke test |
@@ -59,8 +67,9 @@ experiments only; it doesn't save anywhere.
   save files to the internal filesystem (the microSD card part will be separate anyway).
 - **Pico W**: the firmware boots and runs, but the wireless chip isn't emulated, so no
   Wi-Fi, and `Pin("LED")` (the onboard LED, wired through the wireless chip) won't work.
-- **Not yet built**: DS18B20 (1-Wire), microSD card (SPI), a wiring file like Wokwi's
-  `diagram.json`.
+- **Not yet built**: DS18B20 (1-Wire) and microSD card (SPI). Wokwi's diagram positions
+  don't carry over exactly (the Pico drawing differs), so a Wokwi `diagram.json` needs its
+  coordinates adjusted.
 
 ## Licenses of bundled pieces
 

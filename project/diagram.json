@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "author": "IOT hladni lanac",
+  "editor": "pico-sim",
+  "parts": [
+    { "type": "board-pi-pico-w", "id": "pico", "top": 0, "left": 0, "attrs": {} },
+    { "type": "wokwi-resistor", "id": "r1", "top": 194.75, "left": 122, "attrs": { "value": "220" } },
+    { "type": "wokwi-led", "id": "led1", "top": 130, "left": 160, "attrs": { "color": "red" } },
+    { "type": "wokwi-pushbutton", "id": "btn1", "top": 152, "left": -116, "attrs": { "color": "green" } }
+  ],
+  "connections": [
+    [ "pico:GP0", "$serialMonitor:RX", "", [] ],
+    [ "pico:GP1", "$serialMonitor:TX", "", [] ],
+    [ "pico:GP16", "r1:1", "green", [] ],
+    [ "r1:2", "led1:A", "green", [] ],
+    [ "led1:C", "pico:GND.5", "black", [ "v9.2" ] ],
+    [ "btn1:2.r", "pico:GP14", "green", [ "h24", "v6.8" ] ],
+    [ "btn1:1.r", "pico:GND.4", "black", [ "h14", "v16.2" ] ]
+  ],
+  "dependencies": {}
+}

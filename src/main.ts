@@ -1,11 +1,11 @@
 // Browser UI: loads firmware and project files from this site, runs the board,
-// and wires the LED, button and serial monitor.
+// draws the circuit from diagram.json and wires up the serial monitor.
 
 import { Board, type ProjectFile } from './board.js';
+import { Circuit, type Diagram } from './circuit.js';
 import { boardKindFromFirmware } from './fs.js';
 
-const LED_PIN = 16;
-const BUTTON_PIN = 14;
+const DIAGRAM = 'diagram.json';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const firmwareSelect = $<HTMLSelectElement>('firmware');
@@ -16,12 +16,13 @@ const tabs = $('tabs');
 const editor = $<HTMLTextAreaElement>('editor');
 const serialOut = $('serial');
 const serialIn = $<HTMLInputElement>('serial-input');
-const led = $('led');
-const button = $<HTMLButtonElement>('button');
+const stage = $('circuit');
 
 let files: ProjectFile[] = [];
 let current = 0;
 let board: Board | null = null;
+let circuit: Circuit | null = null;
+let circuitSource = '';
 let statusTimer = 0;
 let littlefsWasm: ArrayBuffer | null = null;
 const firmwareCache = new Map<string, Uint8Array>();
@@ -39,6 +40,24 @@ async function loadProject() {
   );
   current = Math.max(0, files.findIndex((f) => f.name === 'main.py'));
   renderTabs();
+  drawCircuit();
+}
+
+/** (Re)draw the circuit when diagram.json changed. Returns false on invalid JSON. */
+function drawCircuit(): boolean {
+  const source = files.find((f) => f.name === DIAGRAM)?.content ?? '';
+  if (circuit && source === circuitSource) return true;
+  let diagram: Diagram;
+  try {
+    diagram = JSON.parse(source);
+  } catch (e) {
+    statusText.textContent = `${DIAGRAM}: ${(e as Error).message}`;
+    return false;
+  }
+  circuit?.detach();
+  circuit = new Circuit(stage, diagram);
+  circuitSource = source;
+  return true;
 }
 
 function renderTabs() {
@@ -65,15 +84,11 @@ function appendSerial(text: string) {
   if (atBottom) serialOut.scrollTop = serialOut.scrollHeight;
 }
 
-function setLed(on: boolean) {
-  led.classList.toggle('on', on);
-}
-
 function stop() {
   board?.stop();
   board = null;
+  circuit?.detach();
   clearInterval(statusTimer);
-  setLed(false);
   runButton.disabled = false;
   stopButton.disabled = true;
   serialIn.disabled = true;
@@ -83,15 +98,18 @@ function stop() {
 async function run() {
   stop();
   files[current].content = editor.value;
+  if (!drawCircuit()) return;
   runButton.disabled = true;
   serialOut.textContent = '';
+  serialOut.classList.remove('empty');
   statusText.textContent = 'Loading firmware…';
 
   try {
     const name = firmwareSelect.value;
     if (!firmwareCache.has(name)) firmwareCache.set(name, await fetchBytes(`firmware/${name}`));
     littlefsWasm ??= (await fetchBytes('littlefs.wasm')).buffer as ArrayBuffer;
-    board = await Board.create(firmwareCache.get(name)!, boardKindFromFirmware(name), files, littlefsWasm);
+    const boardFiles = files.filter((f) => f.name !== DIAGRAM);
+    board = await Board.create(firmwareCache.get(name)!, boardKindFromFirmware(name), boardFiles, littlefsWasm);
   } catch (e) {
     statusText.textContent = `Error: ${(e as Error).message}`;
     runButton.disabled = false;
@@ -100,7 +118,7 @@ async function run() {
 
   const b = board;
   b.onSerial = appendSerial;
-  b.pin(LED_PIN).addListener(() => setLed(b.pin(LED_PIN).outputValue && b.pin(LED_PIN).outputEnable));
+  circuit!.attach(b);
   b.start();
 
   stopButton.disabled = false;
@@ -110,18 +128,6 @@ async function run() {
     statusText.textContent = `Running · ${simS.toFixed(1)} s simulated · ${Math.round(b.speed * 100)}% of real time`;
   }, 250);
 }
-
-function pressButton(down: boolean) {
-  button.classList.toggle('down', down);
-  board?.pin(BUTTON_PIN).setInputValue(!down); // to GND when pressed, pull-up otherwise
-}
-
-button.addEventListener('pointerdown', (e) => {
-  button.setPointerCapture(e.pointerId);
-  pressButton(true);
-});
-button.addEventListener('pointerup', () => pressButton(false));
-button.addEventListener('pointercancel', () => pressButton(false));
 
 serialIn.addEventListener('keydown', (e) => {
   if (!board) return;

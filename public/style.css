@@ -8,8 +8,6 @@
   --code-bg: #fbfcfd;
   --serial-bg: #12161c;
   --serial-text: #d7e0ea;
-  --led-off: #6b2a2a;
-  --led-on: #ff3b30;
   color-scheme: light dark;
 }
 
@@ -143,48 +141,85 @@ textarea {
   margin: 6px 0 0;
 }
 
-.parts {
-  display: flex;
-  gap: 32px;
-  padding: 12px 4px 20px;
+.sub {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+  margin-left: 6px;
 }
 
-.part {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  color: var(--muted);
-  font-size: 12px;
+.circuit {
+  flex: 1.3;
+  min-height: 220px;
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 14px;
+  background-color: var(--code-bg);
+  background-image: radial-gradient(var(--border) 1px, transparent 1px);
+  background-size: 16px 16px;
 }
 
-.led {
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  background: var(--led-off);
-  border: 2px solid #00000033;
-  transition: background 60ms, box-shadow 60ms;
+.world {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
 }
 
-.led.on {
-  background: var(--led-on);
-  box-shadow: 0 0 18px 4px #ff3b3088;
+.world .part {
+  position: absolute;
 }
 
-.pushbutton {
-  width: 38px;
-  height: 38px;
-  border-radius: 50%;
-  padding: 0;
-  background: #2b6cb0;
-  border: 4px solid #8a94a3;
-  touch-action: none;
+.wires {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 1;
 }
 
-.pushbutton.down {
-  background: #1d4d80;
-  transform: scale(0.94);
+.wire {
+  fill: none;
+  stroke-width: 2.2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.wire-shadow {
+  fill: none;
+  stroke: #0003;
+  stroke-width: 3.6;
+  stroke-linejoin: round;
+}
+
+.wire-end {
+  fill: #555;
+}
+
+.pico-label {
+  font: 600 4.6px ui-monospace, Consolas, monospace;
+  fill: #e8f2ea;
+}
+
+.pico-label.gnd {
+  fill: #9fb3a6;
+}
+
+.pico-chip {
+  font: 600 5px system-ui, sans-serif;
+  fill: #bbb;
+}
+
+.pico-name {
+  font: 700 7px system-ui, sans-serif;
+  fill: #e8f2ea;
+}
+
+.serial.empty {
+  color: #7d8896;
 }
 
 .serial {

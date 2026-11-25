@@ -17,13 +17,14 @@ await page.waitForFunction(() => document.querySelector('#serial').textContent.i
 
 const ledStates = new Set();
 for (let i = 0; i < 40; i++) {
-  ledStates.add(await page.$eval('#led', (el) => el.classList.contains('on')));
+  ledStates.add(await page.$eval('wokwi-led', (el) => !!el.value));
   await new Promise((r) => setTimeout(r, 150));
 }
 
-const btn = await page.$('#button');
+const btn = await page.$('wokwi-pushbutton');
 const box = await btn.boundingBox();
-await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+// The cap sits in the middle of the part's left square.
+await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.5);
 await page.mouse.down();
 await new Promise((r) => setTimeout(r, 600));
 await page.mouse.up();

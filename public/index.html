@@ -28,19 +28,10 @@
       </section>
 
       <section class="board">
-        <h2>Circuit</h2>
-        <div class="parts">
-          <div class="part">
-            <div id="led" class="led" aria-label="LED"></div>
-            <span>LED · GP16</span>
-          </div>
-          <div class="part">
-            <button id="button" class="pushbutton" aria-label="Push button"></button>
-            <span>Button · GP14 → GND</span>
-          </div>
-        </div>
+        <h2>Circuit <span class="sub">from diagram.json · press the button with the mouse</span></h2>
+        <div id="circuit" class="circuit"></div>
         <h2>Serial monitor</h2>
-        <pre id="serial" class="serial"></pre>
+        <pre id="serial" class="serial empty">Press ▶ Run to start the Pico. Its output appears here.</pre>
         <input id="serial-input" class="serial-input" placeholder="Type and press Enter · Ctrl+C interrupts" disabled />
       </section>
     </main>
