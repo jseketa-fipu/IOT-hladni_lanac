@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test:py": "node scripts/test-python.mjs",
     "test:sim": "node --import tsx --test --test-reporter=spec \"test/**/*.test.ts\"",
-    "headless": "tsx test/headless.ts"
+    "headless": "tsx test/headless.ts",
+    "test:watch": "node scripts/test-watch.mjs"
   },
   "keywords": [],
   "author": "",

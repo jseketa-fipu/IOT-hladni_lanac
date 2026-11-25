@@ -11,7 +11,7 @@ const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
 page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
 
-await page.goto(url, { waitUntil: 'networkidle0' });
+await page.goto(url, { waitUntil: 'load' });
 await page.click('#run');
 await page.waitForFunction(() => document.querySelector('#serial').textContent.includes('main.py is running'), { timeout: 30000 });
 

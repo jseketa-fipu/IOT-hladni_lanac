@@ -1,14 +1,43 @@
-// Bundles the page into dist/ (what GitHub Pages serves). `--serve` starts a dev server.
-import { cpSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+// Bundles the page into dist/ (what GitHub Pages serves).
+// `--serve` starts a dev server with live reload: changes in src/ rebuild the bundle,
+// changes in project/ or public/ are copied into dist/, and the open page reloads
+// (and restarts the simulation if it was running).
+import { cpSync, mkdirSync, readdirSync, rmSync, statSync, watch, writeFileSync } from 'node:fs';
 import * as esbuild from 'esbuild';
 
 const serve = process.argv.includes('--serve');
+
+/** Files of the MicroPython project: plain files only (no __pycache__ from the Python tests). */
+const projectFiles = () =>
+  readdirSync('project').filter((name) => !name.startsWith('.') && statSync(`project/${name}`).isFile());
+
+function copyStatic() {
+  cpSync('public', 'dist', { recursive: true });
+  rmSync('dist/project', { recursive: true, force: true });
+  mkdirSync('dist/project', { recursive: true });
+  const names = projectFiles();
+  for (const name of names) cpSync(`project/${name}`, `dist/project/${name}`);
+  writeFileSync('dist/project/files.json', JSON.stringify(names));
+  cpSync('node_modules/littlefs/dist/littlefs.wasm', 'dist/littlefs.wasm');
+}
+
+// Bumped whenever project/ or public/ change, so the bundle changes and esbuild's
+// live-reload event fires even though no TypeScript changed.
+let staticVersion = 0;
+const staticVersionPlugin = {
+  name: 'static-version',
+  setup(build) {
+    build.onResolve({ filter: /^virtual:static-version$/ }, (args) => ({ path: args.path, namespace: 'static-version' }));
+    build.onLoad({ filter: /.*/, namespace: 'static-version' }, () => ({
+      contents: `export default ${staticVersion};`,
+      loader: 'js',
+    }));
+  },
+};
+
 rmSync('dist', { recursive: true, force: true });
 mkdirSync('dist', { recursive: true });
-cpSync('public', 'dist', { recursive: true });
-cpSync('project', 'dist/project', { recursive: true });
-writeFileSync('dist/project/files.json', JSON.stringify(readdirSync('project')));
-cpSync('node_modules/littlefs/dist/littlefs.wasm', 'dist/littlefs.wasm');
+copyStatic();
 
 const options = {
   entryPoints: ['src/main.ts'],
@@ -21,13 +50,34 @@ const options = {
   outfile: 'dist/app.js',
   sourcemap: true,
   minify: !serve,
+  define: { __DEV__: JSON.stringify(serve) },
+  plugins: [staticVersionPlugin],
 };
 
 if (serve) {
   const ctx = await esbuild.context(options);
   await ctx.watch();
   const { port } = await ctx.serve({ servedir: 'dist', port: 8080 });
-  console.log(`http://localhost:${port}/  (project/ and public/ are copied once at start)`);
+
+  let timer = null;
+  const onStaticChange = (dir) => (_event, file) => {
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      try {
+        copyStatic();
+        staticVersion++;
+        await ctx.rebuild();
+        console.log(`${dir}/${file ?? ''} changed: copied, page reloading`);
+      } catch (e) {
+        console.error(`copy after ${dir} change failed:`, e.message);
+      }
+    }, 120);
+  };
+  const ignore = (handler) => (event, file) => (String(file ?? '').includes('__pycache__') ? undefined : handler(event, file));
+  watch('project', { recursive: true }, ignore(onStaticChange('project')));
+  watch('public', { recursive: true }, onStaticChange('public'));
+
+  console.log(`http://localhost:${port}/  (live reload: src/, project/, public/)`);
 } else {
   await esbuild.build(options);
   console.log('built dist/');

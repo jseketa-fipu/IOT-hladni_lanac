@@ -1,3 +1,5 @@
 node_modules/
 dist/
 public/firmware/
+__pycache__/
+*.pyc

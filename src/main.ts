@@ -4,8 +4,11 @@
 import { Board, type ProjectFile } from './board.js';
 import { Circuit, type Diagram } from './circuit.js';
 import { boardKindFromFirmware } from './fs.js';
+import staticVersion from 'virtual:static-version';
 
 const DIAGRAM = 'diagram.json';
+// Survive dev-server live reloads: which tab/firmware was open and whether it was running.
+const SESSION = { autorun: 'pico-sim:autorun', tab: 'pico-sim:tab', firmware: 'pico-sim:firmware' };
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const firmwareSelect = $<HTMLSelectElement>('firmware');
@@ -36,9 +39,14 @@ async function fetchBytes(url: string) {
 async function loadProject() {
   const names: string[] = await (await fetch('project/files.json')).json();
   files = await Promise.all(
-    names.map(async (name) => ({ name, content: await (await fetch(`project/${name}`)).text() })),
+    names.map(async (name) => ({
+      name,
+      content: await (await fetch(`project/${name}`, { cache: 'no-cache' })).text(),
+    })),
   );
-  current = Math.max(0, files.findIndex((f) => f.name === 'main.py'));
+  const byName = (name: string | null) => files.findIndex((f) => f.name === name);
+  const saved = byName(sessionStorage.getItem(SESSION.tab));
+  current = saved >= 0 ? saved : Math.max(0, byName('main.py'));
   renderTabs();
   drawCircuit();
 }
@@ -69,6 +77,7 @@ function renderTabs() {
       tab.onclick = () => {
         files[current].content = editor.value;
         current = i;
+        sessionStorage.setItem(SESSION.tab, f.name);
         renderTabs();
       };
       return tab;
@@ -153,4 +162,26 @@ editor.addEventListener('keydown', (e) => {
 runButton.onclick = run;
 stopButton.onclick = stop;
 
-loadProject().catch((e) => (statusText.textContent = `Could not load project: ${e.message}`));
+const savedFirmware = sessionStorage.getItem(SESSION.firmware);
+if (savedFirmware && [...firmwareSelect.options].some((o) => o.value === savedFirmware)) firmwareSelect.value = savedFirmware;
+firmwareSelect.onchange = () => sessionStorage.setItem(SESSION.firmware, firmwareSelect.value);
+
+if (__DEV__) {
+  // Live reload from `npm run dev`: esbuild signals a rebuild (src/, project/ or public/ changed).
+  // Edits made in the page editor are not saved to disk and are lost on reload.
+  new EventSource('/esbuild').addEventListener('change', () => {
+    sessionStorage.setItem(SESSION.autorun, board ? '1' : '');
+    location.reload();
+  });
+  console.debug(`pico-sim dev build, static version ${staticVersion}`);
+}
+
+loadProject()
+  .then(() => {
+    if (__DEV__ && sessionStorage.getItem(SESSION.autorun) === '1') {
+      sessionStorage.removeItem(SESSION.autorun);
+      statusText.textContent = 'Reloaded after a file change, restarting…';
+      run();
+    }
+  })
+  .catch((e) => (statusText.textContent = `Could not load project: ${e.message}`));
