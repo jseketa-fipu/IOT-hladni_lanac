@@ -6,8 +6,11 @@
     "fetch-firmware": "node scripts/fetch-firmware.mjs",
     "build": "node scripts/fetch-firmware.mjs && node scripts/build.mjs",
     "dev": "node scripts/fetch-firmware.mjs && node scripts/build.mjs --serve",
-    "test": "tsx test/headless.ts",
-    "typecheck": "tsc --noEmit"
+    "test": "npm run test:py && npm run test:sim",
+    "typecheck": "tsc --noEmit",
+    "test:py": "node scripts/test-python.mjs",
+    "test:sim": "node --import tsx --test --test-reporter=spec \"test/**/*.test.ts\"",
+    "headless": "tsx test/headless.ts"
   },
   "keywords": [],
   "author": "",

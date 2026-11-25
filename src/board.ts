@@ -11,6 +11,8 @@ const UF2_MAGIC1 = 0x9e5d5157;
 const UF2_FLAG_NOT_MAIN_FLASH = 0x1;
 const CYCLE_NS = 1e9 / 125e6; // 125 MHz, like the real Pico
 
+const BOOT_PY = ['# added by pico-sim: wait for the serial monitor', 'import time', 'time.sleep_ms(50)', ''].join('\n');
+
 export interface ProjectFile {
   name: string;
   content: string;
@@ -98,7 +100,13 @@ export class Board {
    */
   static async create(firmware: Uint8Array, kind: BoardKind, files: ProjectFile[], littlefsWasm: ArrayBuffer | Uint8Array) {
     const board = new Board(firmware);
-    await writeFilesystem(board.mcu.flash, kind, files, littlefsWasm);
+    // MicroPython drops prints made before the USB serial link is up (~18 ms after boot),
+    // like a real Pico with no terminal attached. Wokwi shows them all, so give the
+    // emulated host time to connect before main.py runs, unless the project has a boot.py.
+    const withBoot = files.some((f) => f.name === 'boot.py')
+      ? files
+      : [{ name: 'boot.py', content: BOOT_PY }, ...files];
+    await writeFilesystem(board.mcu.flash, kind, withBoot, littlefsWasm);
     return board;
   }
 
@@ -154,7 +162,6 @@ export class Board {
    */
   private tick = () => {
     if (!this.running) return;
-    const { core } = this.mcu;
     const clock = this.sim.clock;
     const now = performance.now();
     const budgetEnd = now + 15; // keep the page responsive
@@ -162,16 +169,7 @@ export class Board {
     const sliceStartNs = clock.nanos;
 
     while (this.running && clock.nanos < targetNs) {
-      this.flushTx();
-      for (let i = 0; i < 20000 && clock.nanos < targetNs; i++) {
-        if (core.waiting) {
-          const next = clock.nanosToNextAlarm;
-          const remaining = targetNs - clock.nanos;
-          clock.tick(next > 0 ? Math.min(next, remaining) : remaining);
-        } else {
-          clock.tick(core.executeInstruction() * CYCLE_NS);
-        }
-      }
+      this.advance(targetNs, 20000);
       if (performance.now() > budgetEnd) break;
     }
 
@@ -191,4 +189,59 @@ export class Board {
 
     this.timer = setTimeout(this.tick, 4);
   };
+
+  /** Execute up to `maxSteps` instructions/idle jumps without passing `targetNs`. */
+  private advance(targetNs: number, maxSteps: number) {
+    const { core } = this.mcu;
+    const clock = this.sim.clock;
+    this.flushTx();
+    for (let i = 0; i < maxSteps && clock.nanos < targetNs; i++) {
+      if (core.waiting) {
+        const next = clock.nanosToNextAlarm;
+        const remaining = targetNs - clock.nanos;
+        clock.tick(next > 0 ? Math.min(next, remaining) : remaining);
+      } else {
+        clock.tick(core.executeInstruction() * CYCLE_NS);
+      }
+    }
+  }
+
+  // ---------- fast-forward API for automated tests (no real-time pacing) ----------
+
+  /** Simulated time in milliseconds since power-on. */
+  get simMs() {
+    return this.sim.clock.nanos / 1e6;
+  }
+
+  /** Everything MicroPython has printed so far. */
+  get output() {
+    return this.received;
+  }
+
+  /** Run as fast as the host allows for `ms` of simulated time. Don't mix with start(). */
+  runFor(ms: number) {
+    const target = this.sim.clock.nanos + ms * 1e6;
+    while (this.sim.clock.nanos < target) this.advance(target, 50000);
+  }
+
+  /**
+   * Run until `done()` is true (checked every `stepMs` of simulated time) or `maxMs` passes.
+   * Returns whether the condition was met.
+   */
+  runUntil(done: () => boolean, maxMs: number, stepMs = 1): boolean {
+    const end = this.sim.clock.nanos + maxMs * 1e6;
+    while (!done()) {
+      if (this.sim.clock.nanos >= end) return false;
+      this.runFor(stepMs);
+    }
+    return true;
+  }
+
+  /** Run until `text` appears in the output after the current point; throws on timeout. */
+  runUntilOutput(text: string, maxMs: number): void {
+    const from = this.received.length;
+    if (!this.runUntil(() => this.received.indexOf(text, from) >= 0, maxMs, 5)) {
+      throw new Error(`"${text}" not printed within ${maxMs} ms of simulated time`);
+    }
+  }
 }
