@@ -34,6 +34,20 @@
         <pre id="serial" class="serial empty">Press ▶ Run to start the Pico. Its output appears here.</pre>
         <input id="serial-input" class="serial-input" placeholder="Type and press Enter · Ctrl+C interrupts" disabled />
       </section>
+
+      <section class="parts">
+        <h2>Parts <span class="sub">set before or during Run</span></h2>
+        <div id="controls" class="controls"></div>
+      </section>
     </main>
+
+    <dialog id="file-view" class="file-view">
+      <header>
+        <strong id="file-view-title"></strong>
+        <button id="file-view-download" type="button">Download</button>
+        <form method="dialog"><button>Close</button></form>
+      </header>
+      <pre id="file-view-body"></pre>
+    </dialog>
   </body>
 </html>

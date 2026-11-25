@@ -1,8 +1,9 @@
 // Browser UI: loads firmware and project files from this site, runs the board,
-// draws the circuit from diagram.json and wires up the serial monitor.
+// draws the circuit from diagram.json with its parts panel and wires up the serial monitor.
 
 import { Board, type ProjectFile } from './board.js';
 import { Circuit, type Diagram } from './circuit.js';
+import { Controls, FileViewer } from './controls.js';
 import { boardKindFromFirmware } from './fs.js';
 import staticVersion from 'virtual:static-version';
 
@@ -20,11 +21,19 @@ const editor = $<HTMLTextAreaElement>('editor');
 const serialOut = $('serial');
 const serialIn = $<HTMLInputElement>('serial-input');
 const stage = $('circuit');
+const controlsPanel = $('controls');
+const viewer = new FileViewer(
+  $<HTMLDialogElement>('file-view'),
+  $('file-view-title'),
+  $('file-view-body'),
+  $<HTMLButtonElement>('file-view-download'),
+);
 
 let files: ProjectFile[] = [];
 let current = 0;
 let board: Board | null = null;
 let circuit: Circuit | null = null;
+let controls: Controls | null = null;
 let circuitSource = '';
 let statusTimer = 0;
 let littlefsWasm: ArrayBuffer | null = null;
@@ -51,7 +60,10 @@ async function loadProject() {
   drawCircuit();
 }
 
-/** (Re)draw the circuit when diagram.json changed. Returns false on invalid JSON. */
+/**
+ * (Re)draw the circuit and its parts panel when diagram.json changed. Returns false on invalid JSON.
+ * An unchanged diagram keeps its CircuitSystem, so part settings and card files survive a new Run.
+ */
 function drawCircuit(): boolean {
   const source = files.find((f) => f.name === DIAGRAM)?.content ?? '';
   if (circuit && source === circuitSource) return true;
@@ -62,9 +74,19 @@ function drawCircuit(): boolean {
     statusText.textContent = `${DIAGRAM}: ${(e as Error).message}`;
     return false;
   }
-  circuit?.detach();
-  circuit = new Circuit(stage, diagram);
+  circuit?.dispose();
+  controls?.dispose();
+  circuit = null;
+  controls = null;
+  try {
+    circuit = new Circuit(stage, diagram);
+    controls = new Controls(controlsPanel, circuit.system, viewer);
+  } catch (e) {
+    statusText.textContent = `${DIAGRAM}: ${(e as Error).message}`;
+    return false;
+  }
   circuitSource = source;
+  for (const w of circuit.system.warnings) console.warn(`diagram.json: ${w}`);
   return true;
 }
 

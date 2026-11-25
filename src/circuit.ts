@@ -1,27 +1,22 @@
-// Draws project/diagram.json (Wokwi's format) and simulates the wiring:
-// which net each pin is on, what drives it, whether an LED lights up,
-// and what a GPIO input reads when a button is pressed.
+// Draws project/diagram.json (Wokwi's format) and lets you interact with it: click the
+// button, watch the LED. All electrical behaviour (nets, LEDs, inputs, part models) lives
+// in CircuitSystem (src/system.ts); this file only renders it and forwards mouse input.
+//
+// Parts: the Pico (src/pico-svg.ts), a DS18B20 drawn here (TO-92, @wokwi/elements has
+// none), and wokwi-led, wokwi-resistor, wokwi-pushbutton, wokwi-microsd-card and
+// wokwi-ds1307 from @wokwi/elements. Wokwi's "rotate" (90/180/270) is supported; a
+// part whose wiring CircuitSystem rejected gets a warning outline and its reason as tooltip.
 
+import '@wokwi/elements/dist/esm/ds1307-element.js';
 import '@wokwi/elements/dist/esm/led-element.js';
+import '@wokwi/elements/dist/esm/microsd-card-element.js';
 import '@wokwi/elements/dist/esm/pushbutton-element.js';
 import '@wokwi/elements/dist/esm/resistor-element.js';
-import { GPIOPinState } from 'rp2040js';
 import type { Board } from './board.js';
 import { PICO_HEIGHT, PICO_PINS, PICO_WIDTH, picoSvg } from './pico-svg.js';
+import { BOARD_TYPES, CircuitSystem, type Diagram, type DiagramPart, type SystemOptions } from './system.js';
 
-export interface DiagramPart {
-  type: string;
-  id: string;
-  top: number;
-  left: number;
-  attrs?: Record<string, string>;
-}
-/** [from "part:pin", to "part:pin", color, waypoints like "h-19.2" / "v48"] */
-export type DiagramConnection = [string, string, string, string[]?];
-export interface Diagram {
-  parts: DiagramPart[];
-  connections: DiagramConnection[];
-}
+export type { Diagram } from './system.js';
 
 interface Pin {
   name: string;
@@ -29,32 +24,75 @@ interface Pin {
   y: number;
 }
 
+type PartElement = HTMLElement & { pinInfo?: Pin[]; value?: unknown; pressed?: boolean; updateComplete?: Promise<unknown> };
+
 interface PlacedPart {
   part: DiagramPart;
-  el: HTMLElement & { pinInfo?: Pin[]; value?: unknown; pressed?: boolean };
+  el: PartElement;
+  /** Pin positions in the part's own (unrotated) coordinates. */
   pins: Pin[];
 }
 
-const BOARD_TYPES = new Set(['board-pi-pico', 'board-pi-pico-w']);
+const WOKWI_TAGS: Record<string, string> = {
+  'wokwi-led': 'wokwi-led',
+  'wokwi-resistor': 'wokwi-resistor',
+  'wokwi-pushbutton': 'wokwi-pushbutton',
+  'wokwi-microsd-card': 'wokwi-microsd-card',
+  'wokwi-ds1307': 'wokwi-ds1307',
+};
 const MARGIN = 28;
 
+// DS18B20 in a TO-92 package, seen from the flat (printed) side; legs GND, DQ, VCC
+// 2.54 mm (9.6 px) apart, like Wokwi's part. Pins are at the leg ends.
+const DS18B20_WIDTH = 28;
+const DS18B20_HEIGHT = 58;
+const DS18B20_PINS: Pin[] = [
+  { name: 'GND', x: 4.4, y: 57 },
+  { name: 'DQ', x: 14, y: 57 },
+  { name: 'VCC', x: 23.6, y: 57 },
+];
+const DS18B20_SVG = `
+  <svg xmlns="http://www.w3.org/2000/svg" width="${DS18B20_WIDTH}" height="${DS18B20_HEIGHT}" viewBox="0 0 ${DS18B20_WIDTH} ${DS18B20_HEIGHT}">
+    ${DS18B20_PINS.map((p) => `<path d="M${14 + (p.x - 14) * 0.45} 24 L${p.x} 31 V${p.y}" fill="none" stroke="#b9bec5" stroke-width="1.6" stroke-linecap="round"/>`).join('')}
+    <path d="M2 26 V10 A12 10 0 0 1 26 10 V26 Z" fill="#232323" stroke="#0e0e0e" stroke-width="0.6"/>
+    <text x="14" y="15" text-anchor="middle" class="ds18b20-name">DS18B20</text>
+    ${DS18B20_PINS.map((p) => `<text x="${p.x + (14 - p.x) * 0.25}" y="23" text-anchor="middle" class="ds18b20-pin">${p.name}</text>`).join('')}
+  </svg>`;
+
 export class Circuit {
+  readonly system: CircuitSystem;
   private parts = new Map<string, PlacedPart>();
-  private boardId = '';
-  private board: Board | null = null;
-  private unlisten: (() => void)[] = [];
-  private pressed = new Set<string>();
+  private readonly resize: ResizeObserver;
+  private readonly unsubscribe: () => void;
 
   constructor(
     private readonly stage: HTMLElement,
     private readonly diagram: Diagram,
+    options: SystemOptions = {},
   ) {
+    this.system = new CircuitSystem(diagram, null, options);
     this.render();
-    new ResizeObserver(() => this.fit()).observe(stage);
+    this.unsubscribe = this.system.onChange((c) => {
+      if (c.kind === 'leds' || c.kind === 'devices') this.showLeds();
+    });
+    this.resize = new ResizeObserver(() => this.fit());
+    this.resize.observe(stage);
   }
 
-  get supported() {
-    return [...this.parts.values()].map((p) => p.part.type);
+  /** Power the parts from `board` (call before board.start()). */
+  attach(board: Board) {
+    this.system.attach(board);
+  }
+
+  detach() {
+    this.system.detach();
+  }
+
+  /** Detach and stop reacting to the page (before drawing a new diagram). */
+  dispose() {
+    this.system.detach();
+    this.unsubscribe();
+    this.resize.disconnect();
   }
 
   // ---------- drawing ----------
@@ -69,54 +107,77 @@ export class Circuit {
     for (const part of this.diagram.parts) {
       const placed = this.createPart(part);
       if (!placed) continue;
-      placed.el.style.left = `${part.left}px`;
-      placed.el.style.top = `${part.top}px`;
-      placed.el.classList.add('part');
-      placed.el.title = `${part.id} (${part.type})`;
-      world.append(placed.el);
+      const { el } = placed;
+      el.style.left = `${part.left}px`;
+      el.style.top = `${part.top}px`;
+      if (part.rotate) el.style.transform = `rotate(${part.rotate}deg)`;
+      el.classList.add('part');
+      el.dataset.part = part.id;
+      const problems = this.system.warnings.filter((w) => w.startsWith(`${part.id}:`));
+      el.title = [`${part.id} (${part.type})`, ...problems].join('\n');
+      if (problems.length) el.classList.add('part-warn');
+      world.append(el);
       this.parts.set(part.id, placed);
     }
 
     this.stage.replaceChildren(world);
-    this.drawWires(wires);
-    this.fit();
+    // Wokwi elements render asynchronously; sizes (for rotation and zoom) are known after that.
+    const ready = [...this.parts.values()].map((p) => p.el.updateComplete ?? Promise.resolve());
+    Promise.all(ready).then(() => {
+      this.drawWires(wires);
+      this.fit();
+    });
+    this.showLeds();
   }
 
   private createPart(part: DiagramPart): PlacedPart | null {
     const attrs = part.attrs ?? {};
     if (BOARD_TYPES.has(part.type)) {
-      this.boardId = part.id;
       const el = document.createElement('div');
       el.innerHTML = picoSvg(part.type.endsWith('-w'));
       el.style.width = `${PICO_WIDTH}px`;
       el.style.height = `${PICO_HEIGHT}px`;
       return { part, el, pins: PICO_PINS };
     }
-    const tag = { 'wokwi-led': 'wokwi-led', 'wokwi-resistor': 'wokwi-resistor', 'wokwi-pushbutton': 'wokwi-pushbutton' }[
-      part.type
-    ];
+    if (part.type === 'wokwi-ds18b20') {
+      const el = document.createElement('div');
+      el.innerHTML = DS18B20_SVG;
+      el.style.width = `${DS18B20_WIDTH}px`;
+      el.style.height = `${DS18B20_HEIGHT}px`;
+      return { part, el, pins: DS18B20_PINS };
+    }
+    const tag = WOKWI_TAGS[part.type];
     if (!tag) {
       console.warn(`diagram.json: part type ${part.type} is not supported yet`);
       return null;
     }
-    const el = document.createElement(tag) as PlacedPart['el'];
+    const el = document.createElement(tag) as PartElement;
     if (attrs.color) el.setAttribute('color', attrs.color);
     if (attrs.value) el.setAttribute('value', attrs.value);
     if (attrs.flip === '1') el.setAttribute('flip', '');
     if (attrs.label) el.setAttribute('label', attrs.label);
     if (part.type === 'wokwi-pushbutton') {
-      el.addEventListener('button-press', () => this.setPressed(part.id, true));
-      el.addEventListener('button-release', () => this.setPressed(part.id, false));
+      el.addEventListener('button-press', () => this.system.press(part.id));
+      el.addEventListener('button-release', () => this.system.release(part.id));
     }
     return { part, el, pins: el.pinInfo ?? [] };
   }
 
+  private showLeds() {
+    for (const [id, lit] of this.system.leds) {
+      const el = this.parts.get(id)?.el;
+      if (el) el.value = lit;
+    }
+  }
+
+  /** A pin's position in diagram coordinates, with the part's rotation applied. */
   private pinPos(ref: string): { x: number; y: number } | null {
     const [id, name] = ref.split(':');
     const placed = this.parts.get(id);
     const pin = placed?.pins.find((p) => p.name === name);
     if (!placed || !pin) return null;
-    return { x: placed.part.left + pin.x, y: placed.part.top + pin.y };
+    const { x, y } = rotatePoint(pin, placed.el, placed.part.rotate ?? 0);
+    return { x: placed.part.left + x, y: placed.part.top + y };
   }
 
   private drawWires(svg: SVGSVGElement) {
@@ -126,17 +187,9 @@ export class Circuit {
       const a = this.pinPos(from);
       const b = this.pinPos(to);
       if (!a || !b) continue; // e.g. the virtual $serialMonitor
-      const pts = [a];
-      let { x, y } = a;
-      for (const w of waypoints) {
-        const n = Number(w.slice(1));
-        if (Number.isNaN(n)) continue;
-        if (w[0] === 'h') x += n;
-        else if (w[0] === 'v') y += n;
-        pts.push({ x, y });
-      }
-      pts.push({ x: b.x, y }, b); // finish horizontally, then vertically
-      const d = pts.map((p, i) => `${i ? 'L' : 'M'}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
+      const d = wirePoints(a, b, waypoints)
+        .map((p, i) => `${i ? 'L' : 'M'}${p.x.toFixed(1)} ${p.y.toFixed(1)}`)
+        .join(' ');
       const stroke = color && color !== '' ? color : '#888';
       paths.push(`<path d="${d}" class="wire-shadow"/><path d="${d}" class="wire" stroke="${stroke}"/>`);
       dots.push(`<circle cx="${a.x}" cy="${a.y}" r="2.2" class="wire-end"/>`, `<circle cx="${b.x}" cy="${b.y}" r="2.2" class="wire-end"/>`);
@@ -154,8 +207,18 @@ export class Circuit {
       maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
     };
     for (const { part, el } of this.parts.values()) {
-      grow(part.left, part.top);
-      grow(part.left + el.offsetWidth, part.top + el.offsetHeight);
+      const w = el.offsetWidth;
+      const h = el.offsetHeight;
+      for (const corner of [{ x: 0, y: 0 }, { x: w, y: 0 }, { x: 0, y: h }, { x: w, y: h }]) {
+        const p = rotatePoint(corner, el, part.rotate ?? 0);
+        grow(part.left + p.x, part.top + p.y);
+      }
+    }
+    // Wires may run outside the parts (waypoints): include them.
+    for (const [from, to, , waypoints = []] of this.diagram.connections) {
+      const a = this.pinPos(from);
+      const b = this.pinPos(to);
+      if (a && b) for (const p of wirePoints(a, b, waypoints)) grow(p.x, p.y);
     }
     const w = maxX - minX + 2 * MARGIN;
     const h = maxY - minY + 2 * MARGIN;
@@ -164,126 +227,30 @@ export class Circuit {
     const offY = (this.stage.clientHeight - (maxY - minY) * scale) / 2 - minY * scale;
     world.style.transform = `translate(${offX}px, ${offY}px) scale(${scale})`;
   }
-
-  // ---------- electrical behaviour ----------
-
-  attach(board: Board) {
-    this.detach();
-    this.board = board;
-    for (const ref of this.boardPinsInUse()) {
-      const gp = gpioIndex(ref);
-      if (gp !== null) this.unlisten.push(board.pin(gp).addListener(() => this.update()));
-    }
-    this.update();
-  }
-
-  detach() {
-    this.unlisten.forEach((u) => u());
-    this.unlisten = [];
-    this.board = null;
-    this.update();
-  }
-
-  private setPressed(id: string, down: boolean) {
-    if (down) this.pressed.add(id);
-    else this.pressed.delete(id);
-    this.update();
-  }
-
-  private boardPinsInUse() {
-    const prefix = `${this.boardId}:`;
-    const refs = new Set<string>();
-    for (const [a, b] of this.diagram.connections) {
-      if (a.startsWith(prefix)) refs.add(a.slice(prefix.length));
-      if (b.startsWith(prefix)) refs.add(b.slice(prefix.length));
-    }
-    return refs;
-  }
-
-  /** Group connected pins into nets (union-find); resistors conduct, buttons only when pressed. */
-  private nets() {
-    const parent = new Map<string, string>();
-    const find = (x: string): string => {
-      if (!parent.has(x)) parent.set(x, x);
-      const p = parent.get(x)!;
-      if (p === x) return x;
-      const r = find(p);
-      parent.set(x, r);
-      return r;
-    };
-    const join = (a: string, b: string) => parent.set(find(a), find(b));
-
-    for (const [a, b] of this.diagram.connections) join(a, b);
-    for (const { part } of this.parts.values()) {
-      const id = part.id;
-      if (part.type === 'wokwi-resistor') join(`${id}:1`, `${id}:2`);
-      if (part.type === 'wokwi-pushbutton') {
-        join(`${id}:1.l`, `${id}:1.r`);
-        join(`${id}:2.l`, `${id}:2.r`);
-        if (this.pressed.has(id)) join(`${id}:1.l`, `${id}:2.l`);
-      }
-    }
-    // All GND pins of the board are one net, as are the 3V3 pins.
-    for (const p of PICO_PINS) {
-      if (p.name.startsWith('GND')) join(`${this.boardId}:${p.name}`, `${this.boardId}:GND`);
-    }
-    return find;
-  }
-
-  /** What drives a net: 'high', 'low' or null (floating). */
-  private driver(net: string, find: (x: string) => string): 'high' | 'low' | null {
-    const board = this.board;
-    for (const p of PICO_PINS) {
-      const ref = `${this.boardId}:${p.name}`;
-      if (find(ref) !== net) continue;
-      if (p.name.startsWith('GND')) return 'low';
-      if (p.name === '3V3' || p.name === 'VSYS' || p.name === 'VBUS') return board ? 'high' : null;
-      const gp = gpioIndex(p.name);
-      if (board && gp !== null) {
-        const state = board.pin(gp).value;
-        if (state === GPIOPinState.High) return 'high';
-        if (state === GPIOPinState.Low) return 'low';
-      }
-    }
-    return null;
-  }
-
-  private update() {
-    const find = this.nets();
-    const board = this.board;
-
-    for (const { part, el } of this.parts.values()) {
-      if (part.type === 'wokwi-led') {
-        const lit =
-          !!board &&
-          this.driver(find(`${part.id}:A`), find) === 'high' &&
-          this.driver(find(`${part.id}:C`), find) === 'low';
-        el.value = lit;
-      }
-    }
-
-    if (!board) return;
-    for (const ref of this.boardPinsInUse()) {
-      const gp = gpioIndex(ref);
-      if (gp === null) continue;
-      const pin = board.pin(gp);
-      const state = pin.value;
-      if (state === GPIOPinState.High || state === GPIOPinState.Low) continue; // an output
-      // Look for something else driving this pin's net.
-      const net = find(`${this.boardId}:${ref}`);
-      let level: boolean | null = null;
-      for (const p of PICO_PINS) {
-        if (p.name === ref || find(`${this.boardId}:${p.name}`) !== net) continue;
-        if (p.name.startsWith('GND')) level = false;
-        else if (p.name === '3V3') level = true;
-      }
-      const value = level ?? state !== GPIOPinState.InputPullDown;
-      if (pin.inputValue !== value) pin.setInputValue(value);
-    }
-  }
 }
 
-function gpioIndex(name: string): number | null {
-  const m = /^GP(\d+)$/.exec(name);
-  return m ? Number(m[1]) : null;
+/** Wokwi's wire routing: waypoints "h<dx>" / "v<dy>" from the start, then horizontally, then vertically to the end. */
+export function wirePoints(a: { x: number; y: number }, b: { x: number; y: number }, waypoints: string[]) {
+  const pts = [a];
+  let { x, y } = a;
+  for (const w of waypoints) {
+    const n = Number(w.slice(1));
+    if (Number.isNaN(n)) continue;
+    if (w[0] === 'h') x += n;
+    else if (w[0] === 'v') y += n;
+    pts.push({ x, y });
+  }
+  pts.push({ x: b.x, y }, b);
+  return pts;
+}
+
+/** Rotate a point of an element by `deg` (clockwise) around the element's centre, as CSS rotate() does. */
+function rotatePoint(p: { x: number; y: number }, el: HTMLElement, deg: number) {
+  if (!deg) return p;
+  const cx = el.offsetWidth / 2;
+  const cy = el.offsetHeight / 2;
+  const r = (deg * Math.PI) / 180;
+  const cos = Math.round(Math.cos(r) * 1e6) / 1e6;
+  const sin = Math.round(Math.sin(r) * 1e6) / 1e6;
+  return { x: cx + (p.x - cx) * cos - (p.y - cy) * sin, y: cy + (p.x - cx) * sin + (p.y - cy) * cos };
 }

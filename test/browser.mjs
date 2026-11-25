@@ -1,42 +1,114 @@
-// Smoke test of the real page in headless Chrome: Run, see serial output, LED blink, button press.
+// Smoke test of the real page in headless Chrome, with the full cold-chain circuit:
+// Run, set the DS18B20 with its slider, see a measurement at that temperature, press the
+// button and see the summary, open the CSV from the SD card panel. Fails on any page error.
 // Usage: node test/browser.mjs [url]   (start `npm run dev` first)
+// Env: CHROME (path to Chrome), SHOT (screenshot path, default: system temp dir).
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import puppeteer from 'puppeteer-core';
 
 const url = process.argv[2] ?? 'http://localhost:8080/';
 const chrome = process.env.CHROME ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe';
+const shot = process.env.SHOT ?? join(tmpdir(), 'pico-sim-browser.png');
+const TEMP = 6.5; // on the DS18B20's 1/16 C grid, so it prints exactly "6.50 C"
+
 const browser = await puppeteer.launch({ executablePath: chrome, headless: true });
 const page = await browser.newPage();
-await page.setViewport({ width: 1280, height: 760 });
+await page.setViewport({ width: 1280, height: 800 });
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
 page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
 
-await page.goto(url, { waitUntil: 'load' });
-await page.click('#run');
-await page.waitForFunction(() => document.querySelector('#serial').textContent.includes('main.py is running'), { timeout: 30000 });
+const serial = () => page.$eval('#serial', (el) => el.textContent);
+const waitSerial = (text, timeout) =>
+  page.waitForFunction((t) => document.querySelector('#serial').textContent.includes(t), { timeout }, text);
+const steps = [];
+const step = async (name, fn) => {
+  try {
+    await fn();
+    steps.push(`ok   ${name}`);
+  } catch (e) {
+    steps.push(`FAIL ${name}: ${e.message.split('\n')[0]}`);
+    throw e;
+  }
+};
 
-const ledStates = new Set();
-for (let i = 0; i < 40; i++) {
-  ledStates.add(await page.$eval('wokwi-led', (el) => !!el.value));
-  await new Promise((r) => setTimeout(r, 150));
+let ok = false;
+try {
+  await page.goto(url, { waitUntil: 'load' });
+  await step('parts panel lists the DS18B20, DS1307 and SD card', async () => {
+    await page.waitForSelector('input[type=range][data-sensor="temp1"]', { timeout: 10000 });
+    await page.waitForSelector('input[type=checkbox][data-card="sd1"]');
+    await page.waitForSelector('.rtc-time');
+    if (await page.$('.warnings')) {
+      throw new Error(`wiring warnings shown: ${await page.$eval('.warnings', (el) => el.textContent)}`);
+    }
+  });
+
+  await step('Run boots the program', async () => {
+    await page.click('#run');
+    await waitSerial('[START] tipkalo', 30000);
+    await waitSerial('[MJERENJE]', 15000);
+  });
+
+  await step(`slider to ${TEMP} C -> measurement line with ${TEMP.toFixed(2)} C`, async () => {
+    await page.$eval(
+      'input[type=range][data-sensor="temp1"]',
+      (el, v) => {
+        el.value = String(v);
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+      },
+      TEMP,
+    );
+    const shown = await page.$eval('input[type=number][data-sensor="temp1"]', (el) => el.value);
+    if (Number(shown) !== TEMP) throw new Error(`number box shows ${shown}`);
+    await waitSerial(`| ${TEMP.toFixed(2)} C | U_RASPONU`, 15000);
+  });
+
+  await step('button press -> summary and CSV tail', async () => {
+    const box = await (await page.$('wokwi-pushbutton')).boundingBox();
+    // The cap sits in the middle of the part; hold longer than the 200 ms debounce.
+    await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.5);
+    await page.mouse.down();
+    await new Promise((r) => setTimeout(r, 400));
+    await page.mouse.up();
+    await waitSerial('[TIPKALO] pritisak', 5000);
+    await waitSerial('[SAZETAK] ', 5000);
+    await waitSerial('[CSV] --- kraj ---', 5000);
+    const out = await serial();
+    if (!new RegExp(`\\[SAZETAK\\] .*max ${TEMP.toFixed(2)} C`).test(out)) throw new Error('summary does not show the new maximum');
+  });
+
+  await step('LED stays off while in range', async () => {
+    if (await page.$eval('wokwi-led', (el) => !!el.value)) throw new Error('LED is lit');
+  });
+
+  await step('SD panel lists hladnjaca.csv and "view" shows it', async () => {
+    await page.waitForFunction(() => document.querySelector('.file-list').textContent.includes('hladnjaca.csv'), { timeout: 5000 });
+    const row = await page.$$eval('.file', (rows) => rows.findIndex((r) => r.textContent.includes('hladnjaca.csv')));
+    const viewButtons = await page.$$('.file .file-actions button:first-child');
+    await viewButtons[row].click();
+    await page.waitForFunction(() => document.querySelector('#file-view').open, { timeout: 2000 });
+    const text = await page.$eval('#file-view-body', (el) => el.textContent);
+    if (!text.startsWith('datum_vrijeme,temperatura_c,stanje\n')) throw new Error(`viewer shows ${JSON.stringify(text.slice(0, 60))}`);
+    if (!text.includes(`,${TEMP.toFixed(2)},U_RASPONU`)) throw new Error('viewer misses the new row');
+    await page.screenshot({ path: shot });
+    await page.keyboard.press('Escape');
+  });
+
+  ok = errors.length === 0;
+} catch {
+  ok = false;
 }
 
-const btn = await page.$('wokwi-pushbutton');
-const box = await btn.boundingBox();
-// The cap sits in the middle of the part's left square.
-await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.5);
-await page.mouse.down();
-await new Promise((r) => setTimeout(r, 600));
-await page.mouse.up();
-await page.waitForFunction(() => document.querySelector('#serial').textContent.includes('button released'), { timeout: 15000 });
-
-await page.screenshot({ path: process.env.SHOT ?? 'test/screenshot.png' });
-const serial = await page.$eval('#serial', (el) => el.textContent);
-const status = await page.$eval('#status', (el) => el.textContent);
+const out = await serial().catch(() => '');
+const status = await page.$eval('#status', (el) => el.textContent).catch(() => '');
 await browser.close();
 
-console.log(serial.trim().split('\n').slice(-6).join('\n'));
+console.log(out.trim().split('\n').slice(-8).join('\n'));
 console.log('status:', status);
-const ok = ledStates.size === 2 && errors.length === 0;
-console.log(ok ? 'PASS' : `FAIL leds=${[...ledStates]} errors=${errors.join(' | ')}`);
+console.log(steps.join('\n'));
+console.log('screenshot:', shot);
+if (errors.length) console.log('page errors:', errors.join(' | '));
+console.log(ok ? 'PASS' : 'FAIL');
 process.exit(ok ? 0 : 1);
