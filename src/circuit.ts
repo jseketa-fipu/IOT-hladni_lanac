@@ -8,6 +8,7 @@
 // part whose wiring CircuitSystem rejected gets a warning outline and its reason as tooltip.
 
 import '@wokwi/elements/dist/esm/ds1307-element.js';
+import { reportedTemperature } from './devices/ds18b20.js';
 import '@wokwi/elements/dist/esm/led-element.js';
 import '@wokwi/elements/dist/esm/microsd-card-element.js';
 import '@wokwi/elements/dist/esm/pushbutton-element.js';
@@ -164,7 +165,8 @@ export class Circuit {
       const tag = this.parts.get(id)?.el.querySelector('.temp-tag');
       if (!tag) continue;
       const on = this.system.sensorConnected(id);
-      tag.textContent = on ? `${this.system.temperature(id).toFixed(1)} °C` : 'unplugged';
+      // What the sensor reports (1/16 C steps), same digits as the serial monitor.
+      tag.textContent = on ? `${reportedTemperature(this.system.temperature(id)).toFixed(2)} °C` : 'unplugged';
       tag.classList.toggle('off', !on);
     }
   }

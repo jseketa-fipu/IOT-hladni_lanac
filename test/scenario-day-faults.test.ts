@@ -121,7 +121,7 @@ describe('scenario: faults', () => {
     run.waitStarted();
     const sd = run.find('[SD]');
     assert.equal(sd.length, 1);
-    assert.equal(sd[0].text, '[SD] kartica nije dostupna (no SD card), mjerenja se ne zapisuju');
+    assert.equal(sd[0].text, '[SD] kartica nije dostupna (no SD card), mjerenja se ne zapisuju dok se ne umetne');
 
     run.waitMeasurements(1);
     run.system.setTemperature('temp1', 10);
@@ -142,22 +142,71 @@ describe('scenario: faults', () => {
     run.noTraceback();
   });
 
-  test('SD card pulled out mid-run: one error message, measuring goes on', async () => {
+  test('SD card pulled out mid-run and put back: one error message, logging resumes', async () => {
     const run = await Run.boot({ temperatures: { temp1: 5 } });
     run.waitMeasurements(2);
     const before = run.measurements();
     run.system.setCardInserted('sd1', false);
-    run.waitMeasurements(5);
+    run.waitMeasurements(5); // reading 3 fails to write; 4 and 5 are taken while the card is out
 
     const errors = run.find('[SD] greska');
-    assert.equal(errors.length, 1, run.text());
-    // Not re-mounted when the card comes back: real hardware needs the SD init sequence again,
-    // so writes keep failing (silently, the error is printed once) until the next start.
-    assert.equal(errors[0].text, '[SD] greska pri zapisu u /sd/hladnjaca.csv ([Errno 5] EIO)');
+    assert.equal(errors.length, 1, 'the error is printed once, not every 10 s');
+    assert.equal(errors[0].text, '[SD] greska pri zapisu u /sd/hladnjaca.csv ([Errno 5] EIO), karticu trazim pri svakom mjerenju');
     assert.deepEqual(run.measurements().map((m) => m.temp), ['5.00', '5.00', '5.00', '5.00', '5.00']);
 
     run.system.setCardInserted('sd1', true);
-    assert.equal(run.card('hladnjaca.csv'), [HEADER, ...before.map(csvRow)].join('\n') + '\n');
+    run.waitMeasurements(7);
+    const ms = run.measurements();
+    // The card is found again at the next measurement and that reading is written.
+    const mounts = run.find('[SD] kartica montirana');
+    assert.equal(mounts.length, 2, 'mounted at start and again after reinsertion');
+    assert.deepEqual(run.find('[SD] /sd/hladnjaca.csv postoji').map((l) => l.text), ['[SD] /sd/hladnjaca.csv postoji, 2 redaka mjerenja']);
+    assert.equal(run.card('hladnjaca.csv'), [HEADER, ...before.map(csvRow), ...ms.slice(5).map(csvRow)].join('\n') + '\n');
+    assert.equal(run.find('[SD] greska').length, 1, 'no new errors after reinsertion');
+    run.noTraceback();
+  });
+
+  test('sensor plugged in only after power-on: its first reading is already valid (not 85 C)', async () => {
+    const run = await Run.boot({ temperatures: { temp1: 5 } });
+    run.system.setSensorConnected('temp1', false);
+    run.waitMeasurements(2);
+    run.system.setSensorConnected('temp1', true);
+    run.waitMeasurements(4);
+
+    assert.deepEqual(run.measurements().map((m) => m.temp ?? 'greska'), ['greska', 'greska', '5.00', '5.00']);
+    assert.ok(!run.text().includes('nemoguca'), 'searching for the new sensor must not cut the 750 ms conversion short');
+    run.noTraceback();
+  });
+
+  test('clock set back across midnight: each date gets one summary row, with a warning', async () => {
+    const run = await Run.boot({ temperatures: { temp1: 5 }, rtcTime: new Date(Date.UTC(2026, 10, 17, 23, 59, 30)) });
+    run.waitMeasurements(4); // 23:59:31, :41, :51, then 00:00:01 closes the 17th
+    run.system.setRtcTime('rtc1', new Date(Date.UTC(2026, 10, 17, 23, 58, 0))); // e.g. "Jump to 23:58" pressed again
+    run.waitMeasurements(4 + 14); // runs past midnight a second time
+
+    assert.deepEqual(run.find('[DNEVNI SAZETAK]').map((l) => l.text.slice(0, 28)), ['[DNEVNI SAZETAK] 2026-11-17:']);
+    assert.deepEqual(run.find('[RTC] sat je vracen').map((l) => l.text), [
+      '[RTC] sat je vracen unatrag (2026-11-17), dnevni sazetak i dalje vodi dan 2026-11-18',
+    ]);
+    const rows = run.card('sazetak.csv')!.trim().split('\n').slice(1);
+    assert.deepEqual(rows.map((r) => r.split(',')[0]), ['2026-11-17'], 'no duplicate day rows');
+    run.noTraceback();
+  });
+
+  test('SD card inserted only after power-on: logging starts from the next measurement', async () => {
+    const run = await Run.boot({ temperatures: { temp1: 5 } });
+    run.system.setCardInserted('sd1', false);
+    run.waitMeasurements(2);
+    run.system.setCardInserted('sd1', true);
+    run.waitMeasurements(4);
+
+    const ms = run.measurements();
+    assert.deepEqual(run.find('[SD]').map((l) => l.text), [
+      '[SD] kartica nije dostupna (no SD card), mjerenja se ne zapisuju dok se ne umetne',
+      '[SD] kartica montirana na /sd',
+      '[SD] nova datoteka /sd/hladnjaca.csv, zapisano zaglavlje',
+    ]);
+    assert.equal(run.card('hladnjaca.csv'), [HEADER, ...ms.slice(2).map(csvRow)].join('\n') + '\n');
     run.noTraceback();
   });
 });

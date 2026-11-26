@@ -7,6 +7,7 @@
 // conditions) and while running. Wiring warnings are listed at the top.
 
 import type { FatFile } from './devices/fat.js';
+import { reportedTemperature } from './devices/ds18b20.js';
 import type { CircuitSystem } from './system.js';
 
 const h = <K extends keyof HTMLElementTagNameMap>(tag: K, props: Partial<HTMLElementTagNameMap[K]> & { class?: string } = {}, ...children: (Node | string)[]) => {
@@ -22,6 +23,9 @@ const pad = (n: number) => String(n).padStart(2, '0');
 /** "2026-11-17 23:58:00" from a Date whose UTC fields are the clock fields. */
 const rtcText = (d: Date) =>
   `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
+/** 4.5 -> '4.5', 8.05 -> '8.05', 8.0625 -> '8.06': the user's number, without float noise. */
+const trimmed = (t: number) => String(Number(t.toFixed(2)));
+
 const sizeText = (n: number) => (n < 1024 ? `${n} B` : `${(n / 1024).toFixed(1)} KB`);
 
 /** Shows one file of an SD card in a dialog and keeps it current while the program writes. */
@@ -164,19 +168,23 @@ export class Controls {
     const slider = h('input', { type: 'range', min: '-20', max: '40', step: '0.1', ariaLabel: `${id} temperature` });
     const number = h('input', { type: 'number', min: '-55', max: '125', step: '0.1', class: 'num', ariaLabel: `${id} temperature in °C` });
     const connected = h('input', { type: 'checkbox' });
+    const reports = h('div', { class: 'muted small' });
     slider.dataset.sensor = id;
     number.dataset.sensor = id;
     const show = () => {
       const t = s.temperature(id);
-      if (document.activeElement !== number) number.value = t.toFixed(1);
+      if (document.activeElement !== number) number.value = trimmed(t);
       if (document.activeElement !== slider) slider.value = String(t);
       connected.checked = s.sensorConnected(id);
+      // The chip measures in 1/16 C steps: say so when that changes the number (8.04 -> 8.06).
+      const r = reportedTemperature(t);
+      reports.textContent = r.toFixed(2) === t.toFixed(2) ? '' : `sensor reports ${r.toFixed(2)} °C (it measures in 1/16 °C steps)`;
     };
     slider.addEventListener('input', () => s.setTemperature(id, Number(slider.value)));
     number.addEventListener('change', () => {
       const v = Number(number.value);
       if (number.value !== '' && Number.isFinite(v)) s.setTemperature(id, v);
-      number.value = s.temperature(id).toFixed(1);
+      number.value = trimmed(s.temperature(id));
     });
     connected.addEventListener('change', () => s.setSensorConnected(id, connected.checked));
     this.sync.push(show);
@@ -186,6 +194,7 @@ export class Controls {
       { class: 'part-card' },
       this.head(id, 'DS18B20', pins ? `GP${pins.DQ}` : ''),
       h('div', { class: 'temp-row' }, slider, h('label', { class: 'num-wrap' }, number, h('span', {}, '°C'))),
+      reports,
       h('label', { class: 'check' }, connected, ' connected'),
     );
   }

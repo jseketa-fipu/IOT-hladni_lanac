@@ -92,6 +92,37 @@ def dan_uptime(ms):
     return "dan {}".format(int(ms) // MS_U_DANU + 1)
 
 
+# Rezultati promjena_dana()
+ISTI_DAN = "isti"
+NOVI_DAN = "novi"
+DAN_UNATRAG = "unatrag"
+DRUGA_VRSTA = "druga_vrsta"
+
+
+def promjena_dana(trenutni, novi):
+    """Usporedi kljuc dana sazetka s kljucem dana novog mjerenja.
+
+    Kljucevi su '2026-11-17' (s RTC-a) ili 'dan 3' (bez RTC-a).
+    NOVI_DAN     datum je otisao naprijed: zavrsi dan (sazetak) i pocni novi.
+    DAN_UNATRAG  sat je vracen unatrag (npr. rucno namjesten): ne zatvaraj dan,
+                 inace bi se isti datum pojavio dvaput u sazetak.csv.
+    DRUGA_VRSTA  prijelaz izmedu RTC-a i vremena od pokretanja (RTC se izgubio
+                 ili pronasao): isti dan se nastavlja pod novim kljucem.
+    ISTI_DAN     nista se ne mijenja.
+    """
+    if novi == trenutni:
+        return ISTI_DAN
+    if not trenutni:
+        return NOVI_DAN
+    a_dan = trenutni.startswith("dan ")
+    b_dan = novi.startswith("dan ")
+    if a_dan != b_dan:
+        return DRUGA_VRSTA
+    if a_dan:  # 'dan 10' > 'dan 9' brojcano, ne kao tekst
+        return NOVI_DAN if int(novi[4:]) > int(trenutni[4:]) else DAN_UNATRAG
+    return NOVI_DAN if novi > trenutni else DAN_UNATRAG  # ISO datumi se ispravno usporeduju kao tekst
+
+
 def opis_greske(e):
     """Tekst iznimke za poruku. Neke iznimke nemaju tekst (npr. onewire.OneWireError()
     kad se senzor ne javi), pa bi poruka bila '()'; tada se ispisuje ime tipa iznimke."""

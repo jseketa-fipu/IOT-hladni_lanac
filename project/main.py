@@ -126,14 +126,31 @@ def _dodaj_redak(putanja, zaglavlje, redak):
         return True
     except OSError as e:
         if not _sd_greska_ispisana:
-            print("[SD] greska pri zapisu u {} ({})".format(putanja, hl.opis_greske(e)))
+            print("[SD] greska pri zapisu u {} ({}), karticu trazim pri svakom mjerenju".format(
+                putanja, hl.opis_greske(e)))
             _sd_greska_ispisana = True
+        _odbaci_karticu()
         return False
 
 
-def init_sd():
-    """Montira karticu na /sd i po potrebi napise zaglavlje CSV-a."""
-    global sd_ok, broj_redaka
+def _odbaci_karticu():
+    """Kartica je izvadena ili ne radi: odmontiraj je da se kasnije moze ponovno montirati."""
+    global sd_ok
+    sd_ok = False
+    try:
+        os.umount("/sd")
+    except OSError:
+        pass
+
+
+def init_sd(tiho=False):
+    """Montira karticu na /sd i po potrebi napise zaglavlje CSV-a.
+
+    Poziva se pri pokretanju i, dok kartice nema, prije svakog mjerenja (tiho=True:
+    neuspjeh se ne ispisuje svakih 10 s), pa kartica umetnuta kasnije ili vracena
+    nakon vadenja opet prima zapise.
+    """
+    global sd_ok, broj_redaka, _sd_greska_ispisana
     try:
         import sdcard
         spi = SPI(0, baudrate=1_000_000, sck=Pin(2), mosi=Pin(3), miso=Pin(4))
@@ -141,9 +158,12 @@ def init_sd():
         os.mount(kartica, "/sd")
     except Exception as e:
         sd_ok = False
-        print("[SD] kartica nije dostupna ({}), mjerenja se ne zapisuju".format(hl.opis_greske(e)))
+        if not tiho:
+            print("[SD] kartica nije dostupna ({}), mjerenja se ne zapisuju dok se ne umetne".format(
+                hl.opis_greske(e)))
         return
     sd_ok = True
+    _sd_greska_ispisana = False
     print("[SD] kartica montirana na /sd")
     try:
         if _postoji(CSV_PUTANJA):
@@ -334,6 +354,7 @@ def zavrsi_dan(novi_datum):
 # ---------- jedno mjerenje ----------
 _prethodno_mjerenje_ms = None
 _mjerenje_od_pokretanja_ms = 0   # planirani trenutak mjerenja od pokretanja (za vrijeme bez RTC-a)
+_zadnji_datum = None             # kljuc dana prethodnog mjerenja (poruka o satu vracenom unatrag samo jednom)
 
 
 def obradi_mjerenje(temp, zakazano_ms):
@@ -342,7 +363,7 @@ def obradi_mjerenje(temp, zakazano_ms):
     zakazano_ms je planirani trenutak mjerenja (tocno svakih 10 s), pa trajanje
     alarma, razmaci za sazetak i vrijeme bez RTC-a ne ovise o kasnjenju petlje.
     """
-    global _prethodno_mjerenje_ms, _mjerenje_od_pokretanja_ms
+    global _prethodno_mjerenje_ms, _mjerenje_od_pokretanja_ms, _zadnji_datum
     if _prethodno_mjerenje_ms is None:
         # Prvo mjerenje: broji se kao da je prethodno bilo INTERVAL ranije, da vrijeme
         # izvan raspona u sazetku bude jednako onome u poruci [ALARM KRAJ] (koja broji od
@@ -356,8 +377,17 @@ def obradi_mjerenje(temp, zakazano_ms):
     _prethodno_mjerenje_ms = zakazano_ms
 
     datum_vrijeme, datum = procitaj_vrijeme(_mjerenje_od_pokretanja_ms)
-    if datum != sazetak.datum:
+    promjena = hl.promjena_dana(sazetak.datum, datum)
+    if promjena == hl.NOVI_DAN:
         zavrsi_dan(datum)
+    elif promjena == hl.DRUGA_VRSTA:
+        sazetak.datum = datum   # RTC izgubljen ili pronaden: isti dan se nastavlja
+    elif promjena == hl.DAN_UNATRAG and datum != _zadnji_datum:
+        print("[RTC] sat je vracen unatrag ({}), dnevni sazetak i dalje vodi dan {}".format(datum, sazetak.datum))
+    _zadnji_datum = datum
+
+    if not sd_ok:
+        init_sd(tiho=True)  # kartica umetnuta ili vracena u meduvremenu?
 
     stanje = provjeri_alarm(temp, zakazano_ms)
     postavi_led(nadzor.led_upaljena())
@@ -404,7 +434,9 @@ def main():
                 # petlja je jako zakasnila: ne sustizi propustena mjerenja
                 sljedece_ms = time.ticks_add(sada, INTERVAL_MJERENJA_MS)
             pokreni_mjerenje()
-            pretvorba_pocetak = sada
+            # vrijeme nakon poziva: trazenje tek prikljucenog senzora traje nekoliko ms, a
+            # citanje prije isteka 750 ms vratilo bi 85 C umjesto izmjerene vrijednosti
+            pretvorba_pocetak = time.ticks_ms()
             pretvorba_u_tijeku = True
 
         # Citanje rezultata najranije 750 ms nakon pokretanja pretvorbe.

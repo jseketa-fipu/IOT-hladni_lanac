@@ -117,6 +117,22 @@ try {
     if (later !== stopped) throw new Error(`serial output grew after Stop (${stopped} -> ${later} chars)`);
   });
 
+  await step('8.04 C typed -> badge shows what the sensor reports (8.06 C) and the panel explains it', async () => {
+    await page.$eval('input[type=number][data-sensor="temp1"]', (el) => {
+      el.value = '8.04';
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await new Promise((r) => setTimeout(r, 200));
+    const shown = await page.evaluate(() => ({
+      box: document.querySelector('input[type=number][data-sensor="temp1"]').value,
+      badge: [...document.querySelectorAll('#circuit *')].map((e) => e.textContent?.trim() ?? '').find((t) => /°C$/.test(t) && t.length < 12),
+      note: document.querySelector('input[type=number][data-sensor="temp1"]').closest('section').textContent,
+    }));
+    if (shown.box !== '8.04' || shown.badge !== '8.06 °C' || !shown.note.includes('sensor reports 8.06 °C')) {
+      throw new Error(JSON.stringify(shown));
+    }
+  });
+
   await step('speed 10x, 10 C -> alarm after 2 min 10 s simulated, LED lit, within 40 s real time', async () => {
     await page.select('#speed', '10');
     await page.$eval('input[type=range][data-sensor="temp1"]', (el) => {

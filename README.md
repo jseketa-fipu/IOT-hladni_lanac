@@ -285,20 +285,26 @@ of wall time; after that, minutes of simulated time take seconds.
 - **Speed**: how fast simulated time runs: 1× (real time), 5×, 10×, 20× or Max.
   The program behaves exactly the same at every speed; only the wait changes. The
   LED alarm needs the temperature out of range for **more than 2 minutes**: at 10×
-  that's about 13 seconds instead. A browser reaches roughly 20–25× at most; if a
-  speed can't be reached, the status bar says what it actually gets. You can change
-  the speed while the program runs.
+  that's about 13 seconds instead. How fast it can go depends on your computer
+  (typically 15–25×); if a speed can't be reached, the status bar says what it
+  actually gets. You can change the speed while the program runs.
 - **Circuit**: the wiring from `diagram.json`. Parts react live: the LED lights, and
   you can click the button. The status bar shows simulated time and speed
   (100 % means real time).
 - **Parts** (right-hand panel): one card per part in `diagram.json`. Everything here
   works before **Run** (the conditions the program starts with) and while it runs.
   - **DS18B20**: temperature slider (−20 to 40 °C) and a box for any value from −55 to
-    125 °C; untick *connected* to unplug the sensor.
+    125 °C; untick *connected* to unplug the sensor. The real chip measures in 1/16 °C
+    steps, so the badge in the circuit shows what it will report: type 8.04 and it reports
+    **8.06**, which is already outside 2–8 °C. The panel points this out when it happens.
   - **DS1307 clock**: the clock's current date and time. Pick a new one and press **Set**,
     or **Jump to 23:58:00** to see the daily summary at midnight two minutes later.
-    Like the real battery-backed chip, it keeps counting between runs.
-  - **microSD**: untick *inserted* to pull the card out. The file list shows what the
+    Like the real battery-backed chip, it keeps counting between runs, and it only holds
+    the years 2000–2099. Setting it *back* (e.g. pressing Jump twice) doesn't close a day
+    twice: the program prints a `[RTC]` warning and keeps adding to the current day.
+  - **microSD**: untick *inserted* to pull the card out; tick it again and the program
+    finds the card at the next measurement and carries on writing (readings taken while
+    it was out are not on the card, but they were printed). The file list shows what the
     program wrote (size, and when it last changed); **view** opens a file, **download**
     saves it. The card keeps its files between runs, like a real card; **Erase** formats it.
     The button prints only the last 10 CSV rows. To get the whole file through the serial

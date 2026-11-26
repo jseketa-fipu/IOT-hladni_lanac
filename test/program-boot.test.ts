@@ -99,7 +99,7 @@ test('cold-chain program runs with SD, RTC and sensor missing', async () => {
   board.runFor(45_000);
   const out = () => board.output;
   assert.match(out(), /\[START\] raspon 2\.0 - 8\.0 C, mjerenje svakih 10 s, alarm nakon 120 s izvan raspona/);
-  assert.match(out(), /\[SD\] kartica nije dostupna \(no SD card\), mjerenja se ne zapisuju/);
+  assert.match(out(), /\[SD\] kartica nije dostupna \(no SD card\), mjerenja se ne zapisuju dok se ne umetne/);
   assert.match(out(), /\[RTC\] sat nije dostupan \(.*\), koristim vrijeme od pokretanja/);
   assert.match(out(), /\[SENZOR\] DS18B20 nije pronaden na GP15/);
 

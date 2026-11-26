@@ -35,6 +35,16 @@ const PRESENCE_LENGTH_NS = 120 * US;
 const READ_ZERO_HOLD_NS = 30 * US;
 const COPY_TIME_NS = 10e6; // EEPROM write, 10 ms max
 
+/**
+ * The value a DS18B20 at its default 12-bit resolution reports for a temperature:
+ * the nearest 1/16 C step, clamped to -55..125. E.g. 8.04 -> 8.0625 (out of 2-8 C!).
+ * MicroPython prints these steps with "{:.2f}" exactly like JS toFixed(2) (checked on
+ * the firmware), so reportedTemperature(t).toFixed(2) is what the serial monitor shows.
+ */
+export function reportedTemperature(celsius: number): number {
+  return Math.round(clampTemp(celsius) * 16) / 16;
+}
+
 /** Conversion time in ns for resolution codes 0..3 (9..12 bit). */
 const CONVERSION_NS = [93.75e6, 187.5e6, 375e6, 750e6];
 

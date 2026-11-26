@@ -14,7 +14,12 @@ from hladni_lanac import (  # noqa: E402
     NadzorAlarma,
     Sazetak,
     Tipkalo,
+    DAN_UNATRAG,
+    DRUGA_VRSTA,
+    ISTI_DAN,
+    NOVI_DAN,
     dan_uptime,
+    promjena_dana,
     format_datum,
     format_datum_vrijeme,
     format_trajanje,
@@ -299,6 +304,32 @@ class Oblikovanje(unittest.TestCase):
     def test_redak_mjerenja(self):
         self.assertEqual(redak_mjerenja("+00:00:10", 4.5, U_RASPONU), "[MJERENJE] +00:00:10 | 4.50 C | U_RASPONU")
         self.assertEqual(redak_mjerenja("+00:00:10", None, U_RASPONU), "[MJERENJE] +00:00:10 | greska | U_RASPONU")
+
+
+class PromjenaDana(unittest.TestCase):
+    def test_isti_dan(self):
+        self.assertEqual(promjena_dana("2026-11-17", "2026-11-17"), ISTI_DAN)
+        self.assertEqual(promjena_dana("dan 2", "dan 2"), ISTI_DAN)
+
+    def test_datum_naprijed_je_novi_dan(self):
+        self.assertEqual(promjena_dana("2026-11-17", "2026-11-18"), NOVI_DAN)
+        self.assertEqual(promjena_dana("2026-12-31", "2027-01-01"), NOVI_DAN)
+        self.assertEqual(promjena_dana("2026-11-17", "2026-11-20"), NOVI_DAN)  # preskoceni dani
+
+    def test_sat_vracen_unatrag_ne_zatvara_dan(self):
+        self.assertEqual(promjena_dana("2026-11-18", "2026-11-17"), DAN_UNATRAG)
+        self.assertEqual(promjena_dana("2099-12-31", "2000-01-01"), DAN_UNATRAG)  # DS1307 se vrati na 2000.
+
+    def test_dani_bez_rtc_usporeduju_se_brojcano(self):
+        self.assertEqual(promjena_dana("dan 9", "dan 10"), NOVI_DAN)
+        self.assertEqual(promjena_dana("dan 10", "dan 9"), DAN_UNATRAG)
+
+    def test_prijelaz_rtc_uptime_nastavlja_dan(self):
+        self.assertEqual(promjena_dana("2026-11-17", "dan 1"), DRUGA_VRSTA)
+        self.assertEqual(promjena_dana("dan 1", "2026-11-17"), DRUGA_VRSTA)
+
+    def test_prazan_pocetak(self):
+        self.assertEqual(promjena_dana("", "2026-11-17"), NOVI_DAN)
 
 
 class TipkaloTest(unittest.TestCase):
