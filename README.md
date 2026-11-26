@@ -6,6 +6,9 @@ group works in one Git repo, and every push updates the live simulator.
 
 **Open it:** https://jseketa-fipu.github.io/IOT-hladni_lanac/ and press **▶ Run**.
 
+**Requirements:** [docs/zahtjevi.md](docs/zahtjevi.md) (in Croatian) is Luka's task plan with everything
+we added or changed clearly marked **[DODANO]** / **[PROMIJENJENO]**.
+
 ---
 
 ## Contents
@@ -428,6 +431,7 @@ previous version and the run is marked red on GitHub's *Actions* tab.
 | Path | What |
 |---|---|
 | `project/` | The MicroPython program and the wiring (`diagram.json`) |
+| `docs/zahtjevi.md` | Requirements: Luka's plan plus our additions and changes, marked |
 | `src/board.ts` | The simulated Pico: firmware, timing, USB serial, fast-forward for tests |
 | `src/devices/` | Part models: DS18B20, microSD card (+ FAT16), DS1307 clock |
 | `src/system.ts` | The circuit's electrical side (no drawing): nets, LEDs, buttons, pull-ups, which part model sits on which pins, wiring checks. Used by the page and the tests |
